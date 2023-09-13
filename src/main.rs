@@ -1,3 +1,329 @@
-fn main() {
-    println!("Hello, world!");
+use std::{fs::File, io::Read, path::PathBuf, collections::{HashMap, HashSet, BTreeMap}, hash::Hash};
+
+use colored::Colorize;
+use dse::{dtype::{DSEError, ReadWrite, DSELinkBytes, PointerTable}, swdl::{SWDL, sf2::{copy_presets, copy_raw_sample_data, DSPOptions}, SampleInfo, create_swdl_shell, PRGIChunk, KGRPChunk, Keygroup}, smdl::{midi::{open_midi, get_midi_tpb, get_midi_messages_flattened, TrkChunkWriter, copy_midi_messages, ProgramUsed}, create_smdl_shell}};
+use fileutils::{valid_file_of_type, get_file_last_modified_date_with_default};
+use serde::{Serialize, Deserialize};
+use soundfont::{data::SampleHeader, Preset, SoundFont2};
+
+use crate::fileutils::open_file_overwrite_rw;
+
+use thiserror::Error;
+
+mod deserialize_with;
+mod fileutils;
+
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+struct SongConfig {
+    i: usize,
+    mid: PathBuf,
+    uses: Vec<String>
+}
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+struct DSPConfig {
+    resample_threshold: f64,
+    resample_at: f64,
+    adpcm_encoder_lookahead: u16
+}
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+struct SoundtrackConfig {
+    mainbank: PathBuf,
+    ppmdu_mainbank: bool,
+    outputdir: PathBuf,
+    dsp: DSPConfig,
+    sample_rate_adjustment_curve: usize,
+    pitch_adjust: i64,
+    soundfonts: HashMap<String, PathBuf>,
+    songs: HashMap<String, SongConfig>
+}
+
+#[derive(Debug)]
+struct SampleEntry<'a> {
+    i: u16,
+    sample_header: &'a SampleHeader
+}
+impl<'a> PartialEq for SampleEntry<'a> {
+    fn eq(&self, other: &Self) -> bool {
+        std::ptr::eq(self.sample_header, other.sample_header)
+    }
+}
+impl<'a> Eq for SampleEntry<'a> {  }
+impl<'a> Hash for SampleEntry<'a> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        (self.sample_header as *const SampleHeader).hash(state);
+    }
+}
+
+#[derive(Debug)]
+struct PresetEntry<'a> {
+    i: usize,
+    preset: &'a Preset
+}
+impl<'a> PartialEq for PresetEntry<'a> {
+    fn eq(&self, other: &Self) -> bool {
+        std::ptr::eq(self.preset, other.preset)
+    }
+}
+impl<'a> Eq for PresetEntry<'a> {  }
+impl<'a> Hash for PresetEntry<'a> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        (self.preset as *const Preset).hash(state);
+    }
+}
+
+fn main() -> Result<(), DSEError> {
+    if let Ok(mut config_file) = File::open("./soundtrack.yml") {
+        // Read in the configuration file
+        let mut config_str = String::new();
+        config_file.read_to_string(&mut config_str)?;
+        let soundtrack_config: SoundtrackConfig = serde_yaml::from_str(&config_str).expect(&format!("{}Configuration file is not valid!", "Error: ".red()));
+    
+        // Read in all the soundfont files
+        let mut soundfonts: HashMap<String, SoundFont2> = HashMap::new();
+        for (name, path) in soundtrack_config.soundfonts.iter() {
+            soundfonts.insert(name.clone(), SoundFont2::load(&mut File::open(path)?).map_err(|x| DSEError::SoundFontParseError(format!("{:?}", x)))?);
+        }
+
+        // =========== SMDL ===========
+
+        // Keep track of which presets and samples are actually used by the MIDI
+        let mut samples_used: HashMap<String, HashSet<SampleEntry>> = HashMap::new();
+        let mut samples_used_per_song: HashMap<String, HashSet<SampleEntry>> = HashMap::new();
+        let mut presets_used: HashMap<String, HashSet<PresetEntry>> = HashMap::new();
+        let mut presets_used_per_song: HashMap<String, HashSet<PresetEntry>> = HashMap::new();
+
+        // Keep track of how the presets are mapped
+        let mut preset_mapping_information: HashMap<String, HashMap<(u8, u8), u8>> = HashMap::new();
+
+        // Read in all the MIDI files
+        for (name, song_config) in soundtrack_config.songs.iter() {
+            let smf_source = std::fs::read(&song_config.mid)?;
+            let smf = open_midi(&smf_source)?;
+            let tpb = get_midi_tpb(&smf)?;
+
+            let mut used_soundfonts = Vec::with_capacity(song_config.uses.len());
+            for soundfont_name in song_config.uses.iter() {
+                used_soundfonts.push((soundfont_name.clone(), soundfonts.get(soundfont_name).ok_or(DSEError::Invalid(format!("Soundfont with name '{}' not found!", soundfont_name)))?));
+            }
+            fn find_preset_in_soundfont(soundfont: &SoundFont2, bank: u16, program: u16) -> Option<usize> {
+                for (i, preset) in soundfont.presets.iter().enumerate() {
+                    if preset.header.bank == bank && preset.header.preset == program {
+                        return Some(i);
+                    }
+                }
+                return None;
+            }
+            fn find_preset_in_soundfonts<'a>(soundfonts: &'a [&SoundFont2], bank: u16, program: u16) -> Option<(usize, usize)> {
+                for (soundfont_i, soundfont) in soundfonts.iter().enumerate() {
+                    if let Some(preset_i) = find_preset_in_soundfont(soundfont, bank, program) {
+                        return Some((soundfont_i, preset_i));
+                    }
+                }
+                return None;
+            }
+
+            let mut smdl = create_smdl_shell(get_file_last_modified_date_with_default(&song_config.mid)?, format!("{}.SMD", name))?;
+            smdl.set_link_bytes((0, 255));
+            smdl.song.tpqn = tpb;
+
+            let midi_messages = get_midi_messages_flattened(&smf)?;
+
+            // Vec of TrkChunkWriter's
+            let mut trks: [TrkChunkWriter; 17] = std::array::from_fn(|i| TrkChunkWriter::create(i as u8, i as u8, smdl.get_link_bytes(), None).unwrap());
+            // Copy midi messages
+            let mut song_preset_map: HashMap<(u8, u8), u8> = HashMap::new();
+            let mut current_id = 0_u8;
+            let mut staging = None;
+            let _ = copy_midi_messages(midi_messages, &mut trks, |bank, program, same_tick| {
+                if same_tick {
+                    // Discard
+                    if let Some(((_, _), recyclable_id)) = staging.take() {
+                        current_id = recyclable_id;
+                    }
+                } else {
+                    // Move entry from staging to the actual hashmap
+                    if let Some((key, value)) = staging.take() {
+                        song_preset_map.insert(key, value);
+                    }
+                }
+                if let Some(&program_id) = song_preset_map.get(&(bank, program)) {
+                    Some(program_id)
+                } else {
+                    // Assign new
+                    let assigned_id = current_id;
+                    current_id += 1;
+                    staging = Some(((bank, program), assigned_id));
+                    Some(assigned_id)
+                }
+            })?;
+            // Move the last entry, if there is one, from staging to the actual hashmap
+            if let Some((key, value)) = staging.take() {
+                song_preset_map.insert(key, value);
+            }
+
+            // Fill the tracks into the smdl
+            let track_soundfonts = song_config.uses.iter().map(|soundfont_name| soundfonts.get(soundfont_name).ok_or(DSEError::Invalid(format!("Soundfont with name '{}' not found!", soundfont_name)))).collect::<Result<Vec<&SoundFont2>, _>>()?;
+            smdl.trks.objects = Vec::with_capacity(trks.len());
+            for x in trks {
+                for ProgramUsed { bank, program, notes } in x.programs_used() {
+                    let (soundfont_i, preset_i) = find_preset_in_soundfonts(&track_soundfonts, *bank as u16, *program as u16).ok_or(DSEError::Invalid(format!("Preset {:03}:{:03} not found in any of the specified soundfonts for song '{}'!", bank, program, name)))?;
+                    let sf2 = soundfonts.get(&song_config.uses[soundfont_i]).ok_or(DSEError::Invalid(format!("Soundfont with name '{}' not found!", &song_config.uses[soundfont_i])))?;
+                    presets_used.entry(song_config.uses[soundfont_i].clone()).or_insert(HashSet::new())
+                        .insert(PresetEntry { i: preset_i, preset: &sf2.presets[preset_i] });
+                    presets_used_per_song.entry(name.clone()).or_insert(HashSet::new())
+                        .insert(PresetEntry { i: preset_i, preset: &sf2.presets[preset_i] });
+
+                    let mut dummy_prgi = PointerTable::new(0, 0);
+                    copy_presets(sf2, &mut (0..sf2.sample_headers.len()).into_iter().map(|i| {
+                        let mut dummy_smpl = SampleInfo::default();
+                        dummy_smpl.smplrate = 44100;
+                        (i as u16, dummy_smpl)
+                    }).collect::<BTreeMap<u16, SampleInfo>>(), &mut dummy_prgi, |x| Some(x), 1, 0, |_, preset, _| {
+                        if preset.header.bank == *bank as u16 && preset.header.preset == *program as u16 {
+                            Some(0)
+                        } else {
+                            None
+                        }
+                    });
+                    for program in dummy_prgi.objects {
+                        for split in program.splits_table.objects {
+                            let range = split.lowkey as u8..=split.hikey as u8;
+                            if notes.iter().any(|x| range.contains(x)) {
+                                samples_used.entry(song_config.uses[soundfont_i].clone()).or_insert(HashSet::new())
+                                    .insert(SampleEntry { i: split.SmplID, sample_header: &sf2.sample_headers[split.SmplID as usize] });
+                                samples_used_per_song.entry(name.clone()).or_insert(HashSet::new())
+                                    .insert(SampleEntry { i: split.SmplID, sample_header: &sf2.sample_headers[split.SmplID as usize] });
+                            }
+                        }
+                    }
+                }
+                smdl.trks.objects.push(x.close_track());
+            }
+
+            // Regenerate read markers for the SMDL
+            smdl.regenerate_read_markers()?;
+
+            // Write to file
+            smdl.write_to_file(&mut open_file_overwrite_rw(soundtrack_config.outputdir.join(format!("bgm{:04}.smd", song_config.i)))?)?;
+        
+            preset_mapping_information.insert(name.clone(), song_preset_map);
+        }
+
+        // =========== MAIN BANK SWDL ===========
+
+        // Read in the main bank swd file
+        let mut main_bank_swdl;
+        if valid_file_of_type(&soundtrack_config.mainbank, "swd") {
+            main_bank_swdl = SWDL::default();
+            main_bank_swdl.read_from_file(&mut File::open(&soundtrack_config.mainbank)?)?;
+        } else if valid_file_of_type(&soundtrack_config.mainbank, "xml") {
+            let st = std::fs::read_to_string(&soundtrack_config.mainbank)?;
+            main_bank_swdl = quick_xml::de::from_str::<SWDL>(&st)?;
+            main_bank_swdl.regenerate_read_markers()?;
+            main_bank_swdl.regenerate_automatic_parameters()?;
+        } else {
+            return Err(DSEError::Invalid("Provided Main Bank SWD file is not an SWD file!".to_string()));
+        }
+
+        // Start patching in the SF2 files one by one into the main bank, keeping a record of how samples are mapped for each one
+        let mut sample_mapping_information: HashMap<String, (HashMap<u16, u16>, BTreeMap<u16, SampleInfo>)> = HashMap::new();
+        for (soundfont_name, sf2) in soundfonts.iter() {
+            // If this check fails, that just means that this soundfont isn't used at all. Skip.
+            if let Some(samples_used) = samples_used.get(soundfont_name) {
+                sample_mapping_information.insert(soundfont_name.clone(), copy_raw_sample_data(
+                    &File::open(&soundtrack_config.soundfonts.get(soundfont_name).ok_or(DSEError::Invalid(format!("Soundfont with name '{}' not found!", soundfont_name)))?)?,
+                    sf2,
+                    &mut main_bank_swdl,
+                    DSPOptions {
+                        ppmdu_mainbank: soundtrack_config.ppmdu_mainbank,
+                        resample_threshold: soundtrack_config.dsp.resample_threshold.round() as u32,
+                        sample_rate: soundtrack_config.dsp.resample_at,
+                        adpcm_encoder_lookahead: soundtrack_config.dsp.adpcm_encoder_lookahead as i32
+                    },
+                    soundtrack_config.sample_rate_adjustment_curve,
+                    soundtrack_config.pitch_adjust,
+                    |_, sample_header| samples_used.contains(&SampleEntry { i: 0, sample_header }))?);
+            }
+        }
+
+        // Write to file
+        main_bank_swdl.regenerate_read_markers()?;
+        main_bank_swdl.regenerate_automatic_parameters()?;
+        main_bank_swdl.write_to_file(&mut open_file_overwrite_rw(soundtrack_config.outputdir.join("bgm.swd"))?)?;
+    
+        // =========== SWDL ===========
+
+        for (name, song_config) in soundtrack_config.songs.iter() {
+            // Create a blank track SWDL file
+            let mut swdl = create_swdl_shell(get_file_last_modified_date_with_default(&song_config.mid)?, format!("{}.SWD", name))?;
+            swdl.set_link_bytes((0, 255));
+
+            // Get the song's preset mapping information
+            let song_preset_map = preset_mapping_information.get(name).ok_or(DSEError::WrapperString(format!("{}Song missing from `preset_mapping_information`!", "Internal Error: ".red())))?;
+
+            // Get the soundfonts used by the track
+            let track_soundfonts = song_config.uses.iter().map(|soundfont_name| soundfonts.get(soundfont_name).ok_or(DSEError::Invalid(format!("Soundfont with name '{}' not found!", soundfont_name)))).collect::<Result<Vec<&SoundFont2>, _>>()?;
+
+            // Copy over the necessary presets from the used soundfonts
+            let mut prgi = PRGIChunk::new(0);
+            let mut sample_infos_merged = BTreeMap::new();
+            for (soundfont_name, &sf2) in song_config.uses.iter().zip(track_soundfonts.iter()) {
+                let (sample_mappings, sample_infos) = sample_mapping_information.get(soundfont_name).ok_or(DSEError::WrapperString(format!("{}Soundfont missing from `sample_mapping_information`!", "Internal Error: ".red())))?;
+                let mut sample_infos = sample_infos.clone();
+                copy_presets(
+                    sf2,
+                    &mut sample_infos,
+                    &mut prgi.data,
+                    |i| sample_mappings.get(&i).copied(),
+                    soundtrack_config.sample_rate_adjustment_curve,
+                    soundtrack_config.pitch_adjust,
+                    |_, preset, _| song_preset_map.get(&(preset.header.bank as u8, preset.header.preset as u8)).map(|x| *x as u16));
+                let sample_infos_trimmed: BTreeMap<u16, SampleInfo> = samples_used_per_song.get(name).ok_or(DSEError::Invalid(format!("Song with name '{}' not found!", &name)))?.iter().filter_map(|x| {
+                    if let Some(mapping) = sample_mappings.get(&x.i) {
+                        Some((x.i, sample_infos.get(mapping).ok_or(DSEError::_SampleInPresetMissing(*mapping)).unwrap().clone()))
+                    } else {
+                        // The ones that are filtered out are not in this specific soundfont
+                        None
+                    }
+                }).collect::<BTreeMap<u16, SampleInfo>>();
+                sample_infos_merged.extend(sample_infos_trimmed);
+            }
+            swdl.prgi = Some(prgi);
+
+            // Add the sample info objects last
+            swdl.wavi.data.objects = sample_infos_merged.into_values().collect();
+            // Fix the smplpos
+            let mut pos_in_memory = 0;
+            for obj in &mut swdl.wavi.data.objects {
+                obj.smplpos = pos_in_memory;
+                pos_in_memory += (obj.loopbeg + obj.looplen) * 4;
+            }
+
+            // Keygroups
+            let mut kgrp = KGRPChunk::default();
+            kgrp.data.objects = vec![
+                Keygroup { id: 0, poly: -1, priority: 8, vclow: 0, vchigh: -1, unk50: 0, unk51: 0 },
+                Keygroup { id: 1, poly: 2, priority: 8, vclow: 0, vchigh: 15, unk50: 0, unk51: 0 },
+                Keygroup { id: 2, poly: 1, priority: 8, vclow: 0, vchigh: 15, unk50: 0, unk51: 0 },
+                Keygroup { id: 3, poly: 1, priority: 8, vclow: 0, vchigh: 15, unk50: 0, unk51: 0 },
+                Keygroup { id: 4, poly: 1, priority: 8, vclow: 0, vchigh: 15, unk50: 0, unk51: 0 },
+                Keygroup { id: 5, poly: 1, priority: 1, vclow: 0, vchigh: 15, unk50: 0, unk51: 0 },
+                Keygroup { id: 6, poly: 2, priority: 8, vclow: 0, vchigh: 15, unk50: 0, unk51: 0 },
+                Keygroup { id: 7, poly: 1, priority: 8, vclow: 0, vchigh: 15, unk50: 0, unk51: 0 },
+                Keygroup { id: 8, poly: 2, priority: 8, vclow: 0, vchigh: 15, unk50: 0, unk51: 0 },
+                Keygroup { id: 9, poly: -1, priority: 8, vclow: 0, vchigh: 15, unk50: 0, unk51: 0 },
+                Keygroup { id: 10, poly: -1, priority: 8, vclow: 0, vchigh: 15, unk50: 0, unk51: 0 },
+                Keygroup { id: 11, poly: -1, priority: 8, vclow: 0, vchigh: 15, unk50: 0, unk51: 0 },
+            ]; // Just a quick template keygroup list. By default only the first kgrp is used!
+            swdl.kgrp = Some(kgrp);
+
+            // Write to file
+            swdl.regenerate_read_markers()?;
+            swdl.regenerate_automatic_parameters()?;
+            swdl.write_to_file(&mut open_file_overwrite_rw(soundtrack_config.outputdir.join(format!("bgm{:04}.swd", song_config.i)))?)?;
+        }
+    } else {
+        println!("{}Failed to find soundtrack.yml file!", "Error: ".red());
+    }
+    Ok(())
 }

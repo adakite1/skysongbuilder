@@ -8,3 +8,13 @@ edition = "2021"
 [dependencies]
 serde = "1.0"
 serde_yaml = "0.9"
+quick-xml = { version = "0.30.0", features = ["serialize"] }
+midly = "0.5.3"
+soundfont = "0.0.2"
+chrono = "0.4.26"
+colored = "2"
+dse = { path = "../dse" }
+thiserror = "1.0"
+void = "1"
+# indexmap = "2"
+# by_address = "1.1.0"
