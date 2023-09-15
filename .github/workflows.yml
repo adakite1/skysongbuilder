@@ -2,12 +2,13 @@ on:
   release:
     types: [created]
   push:
+    branches:
+      - master
 
 jobs:
-  release:
-    name: release ${{ matrix.target }}
+  build:
+    name: ${{ matrix.target }}
     runs-on: ubuntu-latest
-    if: github.event_name == 'release'
     strategy:
       fail-fast: false
       matrix:
@@ -20,7 +21,7 @@ jobs:
             archive: zip
     steps:
       - uses: actions/checkout@master
-      - name: Compile and release
+      - name: Compile
         uses: rust-build/rust-build.action@master
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -28,3 +29,11 @@ jobs:
           RUSTTARGET: ${{ matrix.target }}
           ARCHIVE_TYPES: ${{ matrix.archive }}
           MINIFY: "yes"
+          UPLOAD_MODE: none
+      - name: Upload artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: ${{ matrix.target }}
+          path: |
+            ${{ steps.compile.outputs.BUILT_ARCHIVE }}
+            ${{ steps.compile.outputs.BUILT_CHECKSUM }}
