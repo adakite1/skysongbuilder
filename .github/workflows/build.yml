@@ -2,39 +2,37 @@ on:
   release:
     types: [created]
   push:
-    branches:
-      - master
-
 jobs:
-  build:
-    name: ${{ matrix.target }}
-    runs-on: ubuntu-latest
+  release:
+    name: ${{ matrix.platform.release_for }}
     strategy:
-      fail-fast: false
       matrix:
-        include:
-          - target: x86_64-pc-windows-gnu
-            archive: zip
-          - target: x86_64-unknown-linux-musl
-            archive: tar.gz
-          - target: x86_64-apple-darwin
-            archive: zip
+        platform:
+          - release_for: Windows-x86_64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+            bin: skysongbuilder.exe
+            name: skysongbuilder-windows-x86_64.zip
+            command: both
+          - release_for: macOS-x86_64
+            os: macOS-latest
+            target: x86_64-apple-darwin
+            bin: skysongbuilder
+            name: skysongbuilder-macos-x86_64.tar.gz
+            command: both
+          - release_for: Linux-x86_64
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            bin: skysongbuilder
+            name: skysongbuilder-linux-x86_64-musl.tar.gz
+    runs-on: ${{ matrix.platform.os }}
     steps:
-      - uses: actions/checkout@master
-      - name: Compile
-        id: compile
-        uses: rust-build/rust-build.action@master
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Checkout
+        uses: actions/checkout@v3
+      - name: Build binary
+        uses: houseabsolute/actions-rust-cross@v0
         with:
-          RUSTTARGET: ${{ matrix.target }}
-          ARCHIVE_TYPES: ${{ matrix.archive }}
-          MINIFY: "yes"
-          UPLOAD_MODE: none
-          TOOLCHAIN_VERSION: stable
-      - name: Upload artifact
-        uses: actions/upload-artifact@v3
-        with:
-          name: ${{ matrix.target }}
-          path: |
-            ./target/release/skysongbuilder*
+          command: ${{ matrix.platform.command }}
+          target: ${{ matrix.platform.target }}
+          args: "--locked --release"
+          strip: true
