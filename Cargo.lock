@@ -3,6 +3,15 @@
 version = 3
 
 [[package]]
+name = "adpcm-xq-sys"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "689183cbd741eb75bade8215dc2d25eb48af5a2720b088783cdaf502ec7ff3dd"
+dependencies = [
+ "cc",
+]
+
+[[package]]
 name = "ahash"
 version = "0.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -228,9 +237,9 @@ checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
 
 [[package]]
 name = "chrono"
-version = "0.4.30"
+version = "0.4.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "defd4e7873dbddba6c7c91e199c7fcb946abc4a6a4ac3195400bcfb01b5de877"
+checksum = "7f2c685bad3eb3d45a01354cedb7d5faa66194d1d58ba6e267a8de788f79db38"
 dependencies = [
  "android-tzdata",
  "iana-time-zone",
@@ -355,7 +364,7 @@ checksum = "9ea835d29036a4087793836fa931b08837ad5e957da9e23886b29586fb9b6650"
 [[package]]
 name = "dse"
 version = "0.1.0"
-source = "git+https://github.com/adakite1/dse.git#7d284f66ad8ef7ce948c8f543ae87bde2d2dbc44"
+source = "git+https://github.com/adakite1/dse.git#49046aadcb3e99856fe68f870e4820c529f8e510"
 dependencies = [
  "base64",
  "bevy_reflect",
@@ -377,8 +386,9 @@ dependencies = [
 [[package]]
 name = "dse-dsp-sys"
 version = "0.1.1"
-source = "git+https://github.com/adakite1/dse-dsp-sys.git#ad6d943cc37aa12b4a1ee7aa3225e201ece2cc0e"
+source = "git+https://github.com/adakite1/dse-dsp-sys.git#ed4c24f39655c5f595a9147aec8b524b50e4c965"
 dependencies = [
+ "adpcm-xq-sys",
  "cc",
 ]
 
@@ -926,9 +936,9 @@ dependencies = [
 
 [[package]]
 name = "syn"
-version = "2.0.33"
+version = "2.0.35"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9caece70c63bfba29ec2fed841a09851b14a235c60010fa4de58089b6c025668"
+checksum = "59bf04c28bee9043ed9ea1e41afc0552288d3aba9c6efdd78903b802926f4879"
 dependencies = [
  "proc-macro2",
  "quote",
