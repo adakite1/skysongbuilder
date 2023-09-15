@@ -21,7 +21,7 @@ jobs:
             name: skysongbuilder-macos-x86_64.tar.gz
             command: both
           - release_for: Linux-x86_64
-            os: ubuntu-latest
+            os: ubuntu-20.04
             target: x86_64-unknown-linux-musl
             bin: skysongbuilder
             name: skysongbuilder-linux-x86_64-musl.tar.gz
@@ -30,7 +30,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v3
       - name: Install musl-tools on Linux
-        run: sudo apt-get update --yes && sudo apt-get install --yes musl-tools
+        run: sudo apt-get update --yes && sudo apt-get install --yes musl-dev musl-tools
         if: contains(matrix.platform.name, 'musl')
       - name: Build binary
         uses: houseabsolute/actions-rust-cross@v0
