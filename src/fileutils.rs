@@ -33,6 +33,7 @@ pub fn get_file_last_modified_date_with_default<P: AsRef<Path>>(input_file_path:
 pub fn open_file_overwrite_rw<P: AsRef<Path>>(path: P) -> Result<File, DSEError> {
     let parent_path = path.as_ref().parent().ok_or(DSEError::Invalid("Path is not a file!".to_string()))?;
     std::fs::create_dir_all(parent_path)?;
+    println!("[*] Opening file {:?} for rw", path.as_ref());
     let mut file = OpenOptions::new().append(false).create(true).read(true).write(true).open(path)?;
     file.set_len(0)?;
     file.seek(std::io::SeekFrom::Start(0))?;

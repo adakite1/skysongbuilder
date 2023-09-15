@@ -16,5 +16,5 @@ colored = "2"
 dse = { path = "../dse" }
 thiserror = "1.0"
 void = "1"
-# indexmap = "2"
+indexmap = { version = "2", features = ["serde"] }
 # by_address = "1.1.0"

@@ -3,6 +3,7 @@ use std::{fs::File, io::Read, path::PathBuf, collections::{HashMap, HashSet, BTr
 use colored::Colorize;
 use dse::{dtype::{DSEError, ReadWrite, DSELinkBytes, PointerTable}, swdl::{SWDL, sf2::{copy_presets, copy_raw_sample_data, DSPOptions}, SampleInfo, create_swdl_shell, PRGIChunk, KGRPChunk, Keygroup}, smdl::{midi::{open_midi, get_midi_tpb, get_midi_messages_flattened, TrkChunkWriter, copy_midi_messages, ProgramUsed}, create_smdl_shell}};
 use fileutils::{valid_file_of_type, get_file_last_modified_date_with_default};
+use indexmap::IndexMap;
 use serde::{Serialize, Deserialize};
 use soundfont::{data::SampleHeader, Preset, SoundFont2};
 
@@ -25,16 +26,20 @@ struct DSPConfig {
     resample_at: f64,
     adpcm_encoder_lookahead: u16
 }
+const fn ppmdu_mainbank_default() -> bool {
+    false
+}
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 struct SoundtrackConfig {
     mainbank: PathBuf,
+    #[serde(default = "ppmdu_mainbank_default")]
     ppmdu_mainbank: bool,
     outputdir: PathBuf,
     dsp: DSPConfig,
     sample_rate_adjustment_curve: usize,
     pitch_adjust: i64,
-    soundfonts: HashMap<String, PathBuf>,
-    songs: HashMap<String, SongConfig>
+    soundfonts: IndexMap<String, PathBuf>,
+    songs: IndexMap<String, SongConfig>
 }
 
 #[derive(Debug)]
@@ -81,6 +86,7 @@ fn main() -> Result<(), DSEError> {
         // Read in all the soundfont files
         let mut soundfonts: HashMap<String, SoundFont2> = HashMap::new();
         for (name, path) in soundtrack_config.soundfonts.iter() {
+            println!("[*] Opening soundfont {:?}", path);
             soundfonts.insert(name.clone(), SoundFont2::load(&mut File::open(path)?).map_err(|x| DSEError::SoundFontParseError(format!("{:?}", x)))?);
         }
 
@@ -97,6 +103,7 @@ fn main() -> Result<(), DSEError> {
 
         // Read in all the MIDI files
         for (name, song_config) in soundtrack_config.songs.iter() {
+            println!("[*] Reading MIDI file {:?}", song_config.mid);
             let smf_source = std::fs::read(&song_config.mid)?;
             let smf = open_midi(&smf_source)?;
             let tpb = get_midi_tpb(&smf)?;
@@ -185,6 +192,7 @@ fn main() -> Result<(), DSEError> {
                             None
                         }
                     });
+                    assert!(dummy_prgi.objects.len() <= 1); //TODO: Low priority, but replace this with an actual error. This should never happen.
                     for program in dummy_prgi.objects {
                         for split in program.splits_table.objects {
                             let range = split.lowkey as u8..=split.hikey as u8;
@@ -215,6 +223,7 @@ fn main() -> Result<(), DSEError> {
         let mut main_bank_swdl;
         if valid_file_of_type(&soundtrack_config.mainbank, "swd") {
             main_bank_swdl = SWDL::default();
+            println!("[*] Opening mainbank {:?}", soundtrack_config.mainbank);
             main_bank_swdl.read_from_file(&mut File::open(&soundtrack_config.mainbank)?)?;
         } else if valid_file_of_type(&soundtrack_config.mainbank, "xml") {
             let st = std::fs::read_to_string(&soundtrack_config.mainbank)?;
@@ -230,6 +239,7 @@ fn main() -> Result<(), DSEError> {
         for (soundfont_name, sf2) in soundfonts.iter() {
             // If this check fails, that just means that this soundfont isn't used at all. Skip.
             if let Some(samples_used) = samples_used.get(soundfont_name) {
+                println!("[*] Opening soundfont {:?} for patching", &soundtrack_config.soundfonts.get(soundfont_name).ok_or(DSEError::Invalid(format!("Soundfont with name '{}' not found!", soundfont_name)))?);
                 sample_mapping_information.insert(soundfont_name.clone(), copy_raw_sample_data(
                     &File::open(&soundtrack_config.soundfonts.get(soundfont_name).ok_or(DSEError::Invalid(format!("Soundfont with name '{}' not found!", soundfont_name)))?)?,
                     sf2,
