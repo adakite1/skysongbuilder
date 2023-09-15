@@ -36,4 +36,5 @@ jobs:
         uses: actions/upload-artifact@v3
         with:
           name: ${{ matrix.target }}
-          path: ${{ steps.compile.outputs.BUILT_ARCHIVE }}
+          path: |
+            ./target/release/skysongbuilder*
