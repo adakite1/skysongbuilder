@@ -31,6 +31,7 @@ jobs:
           ARCHIVE_TYPES: ${{ matrix.archive }}
           MINIFY: "yes"
           UPLOAD_MODE: none
+          TOOLCHAIN_VERSION: stable
       - name: Upload artifact
         uses: actions/upload-artifact@v3
         with:
