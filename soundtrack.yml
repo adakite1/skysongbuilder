@@ -1,0 +1,35 @@
+#skysongbuilder 0.1.0
+
+mainbank: bgm.swd                 # Where the original game's main bank is (you can find this in the rom)
+outputdir: ./out                  # Where to output the song files (it'll make the folder if it doesn't exist)
+dsp:                              # Settings for stuff related to audio processing
+  resample_threshold: 22050       # If a sample has a sample rate above this threshold, it will automatically be resampled (in the highest-quality way possible of course) to the sample rate specified by "resample_at" below
+  resample_at: 22050              # See above
+  adpcm_encoder_lookahead: 3      # The higher the better, but also, the higher the slower; set to 3 while composing and when you're releasing your hack set it to 6, start the program, and go sleep
+sample_rate_adjustment_curve: 1   # Default is good
+pitch_adjust: 0                   # Adjust the pitch of everything (in cents)
+
+# Add soundfonts here
+soundfonts:
+  Main Bank: out_bgm.sf2
+  2nd Bank: additional_banks/PMD_-_Explorers_of_Sky_full_soundfont.sf2
+  A 3rd Bank: ./additional_banks/Custom.sf2
+
+# Add songs here
+songs:
+  Pokemon Exploration Team Theme:
+    i: 1                          # The id number for your song.
+                                  # If you set it to 100 for example, the files outputted will be bgm0100.swd / bgm0100.smd
+                                  # WARNING: Don't set it to 0
+    mid: 1_B_SYS_P3_OPENIN.mid    # The path to the midi file for the song
+    uses: [Main Bank, 2nd Bank]   # A list of soundfonts used by your song
+  Top Menu Theme:
+    i: 2
+    mid: 2_B_SYS_MENU.mid
+    uses: [A 3rd Bank, Main Bank, 2nd Bank]
+  Shindan:
+    i: 6
+    mid: Shindan.mid
+    uses: [Main Bank]
+
+# P.s. if the game shows a black screen for a track, that track uses too many samples and has caused a lack of memory error in the game.
