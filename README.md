@@ -13,6 +13,6 @@ Since the first version of `dse`, the tool has grown to a point where it can get
 
 **How to use:**
 1. Make the config file
-2. Download here (click on "Releases" on the right to find the prebuilt binaries): https://github.com/adakite1/skysongbuilder
+2. Download the latest version here: [Releases](https://github.com/adakite1/skysongbuilder/releases)
 3. Run it (best to do inside PowerShell so you can see any errors that happen)
 4. You're done!
