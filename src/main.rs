@@ -4,7 +4,7 @@ use colored::Colorize;
 use dse::{dtype::{DSEError, ReadWrite, DSELinkBytes, PointerTable}, swdl::{SWDL, sf2::{copy_presets, copy_raw_sample_data, DSPOptions}, SampleInfo, create_swdl_shell, PRGIChunk, KGRPChunk, Keygroup}, smdl::{midi::{open_midi, get_midi_tpb, get_midi_messages_flattened, TrkChunkWriter, copy_midi_messages, ProgramUsed}, create_smdl_shell}};
 use fileutils::{valid_file_of_type, get_file_last_modified_date_with_default};
 use indexmap::IndexMap;
-use serde::{Serialize, Deserialize};
+use serde::{Serialize, Deserialize, Deserializer};
 use soundfont::{data::SampleHeader, Preset, SoundFont2};
 
 use crate::fileutils::open_file_overwrite_rw;
@@ -23,8 +23,19 @@ struct SongConfig {
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 struct DSPConfig {
     resample_threshold: f64,
-    resample_at: f64,
+    #[serde(deserialize_with = "deserialize_resample_at")]
+    resample_at: (f64, bool),
     adpcm_encoder_lookahead: u16
+}
+fn deserialize_resample_at<'de, D>(deserializer: D) -> Result<(f64, bool), D::Error>
+where D: Deserializer<'de> {
+    let buf = String::deserialize(deserializer)?;
+
+    if buf.trim().starts_with("times") {
+        buf.trim()[5..].trim().parse().map_err(serde::de::Error::custom).map(|x| (x, true))
+    } else {
+        buf.trim().parse().map_err(serde::de::Error::custom).map(|x| (x, false))
+    }
 }
 const fn ppmdu_mainbank_default() -> bool {
     false
@@ -240,6 +251,7 @@ fn main() -> Result<(), DSEError> {
             // If this check fails, that just means that this soundfont isn't used at all. Skip.
             if let Some(samples_used) = samples_used.get(soundfont_name) {
                 println!("[*] Opening soundfont {:?} for patching", &soundtrack_config.soundfonts.get(soundfont_name).ok_or(DSEError::Invalid(format!("Soundfont with name '{}' not found!", soundfont_name)))?);
+                let (sample_rate, sample_rate_relative) = soundtrack_config.dsp.resample_at;
                 sample_mapping_information.insert(soundfont_name.clone(), copy_raw_sample_data(
                     &File::open(&soundtrack_config.soundfonts.get(soundfont_name).ok_or(DSEError::Invalid(format!("Soundfont with name '{}' not found!", soundfont_name)))?)?,
                     sf2,
@@ -247,7 +259,8 @@ fn main() -> Result<(), DSEError> {
                     DSPOptions {
                         ppmdu_mainbank: soundtrack_config.ppmdu_mainbank,
                         resample_threshold: soundtrack_config.dsp.resample_threshold.round() as u32,
-                        sample_rate: soundtrack_config.dsp.resample_at,
+                        sample_rate,
+                        sample_rate_relative,
                         adpcm_encoder_lookahead: soundtrack_config.dsp.adpcm_encoder_lookahead as i32
                     },
                     soundtrack_config.sample_rate_adjustment_curve,
