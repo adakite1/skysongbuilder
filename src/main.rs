@@ -253,6 +253,8 @@ fn main() -> Result<(), DSEError> {
                     soundtrack_config.sample_rate_adjustment_curve,
                     soundtrack_config.pitch_adjust,
                     |_, sample_header| samples_used.contains(&SampleEntry { i: 0, sample_header }))?);
+            } else {
+                println!("{}Soundfont '{}' is never used!", "Warning: ".yellow(), soundfont_name);
             }
         }
 
@@ -278,25 +280,28 @@ fn main() -> Result<(), DSEError> {
             let mut prgi = PRGIChunk::new(0);
             let mut sample_infos_merged = BTreeMap::new();
             for (soundfont_name, &sf2) in song_config.uses.iter().zip(track_soundfonts.iter()) {
-                let (sample_mappings, sample_infos) = sample_mapping_information.get(soundfont_name).ok_or(DSEError::WrapperString(format!("{}Soundfont missing from `sample_mapping_information`!", "Internal Error: ".red())))?;
-                let mut sample_infos = sample_infos.clone();
-                copy_presets(
-                    sf2,
-                    &mut sample_infos,
-                    &mut prgi.data,
-                    |i| sample_mappings.get(&i).copied(),
-                    soundtrack_config.sample_rate_adjustment_curve,
-                    soundtrack_config.pitch_adjust,
-                    |_, preset, _| song_preset_map.get(&(preset.header.bank as u8, preset.header.preset as u8)).map(|x| *x as u16));
-                let sample_infos_trimmed: BTreeMap<u16, SampleInfo> = samples_used_per_song.get(name).ok_or(DSEError::Invalid(format!("Song with name '{}' not found!", &name)))?.iter().filter_map(|x| {
-                    if let Some(mapping) = sample_mappings.get(&x.i) {
-                        Some((x.i, sample_infos.get(mapping).ok_or(DSEError::_SampleInPresetMissing(*mapping)).unwrap().clone()))
-                    } else {
-                        // The ones that are filtered out are not in this specific soundfont
-                        None
-                    }
-                }).collect::<BTreeMap<u16, SampleInfo>>();
-                sample_infos_merged.extend(sample_infos_trimmed);
+                if let Some((sample_mappings, sample_infos)) = sample_mapping_information.get(soundfont_name) {
+                    let mut sample_infos = sample_infos.clone();
+                    copy_presets(
+                        sf2,
+                        &mut sample_infos,
+                        &mut prgi.data,
+                        |i| sample_mappings.get(&i).copied(),
+                        soundtrack_config.sample_rate_adjustment_curve,
+                        soundtrack_config.pitch_adjust,
+                        |_, preset, _| song_preset_map.get(&(preset.header.bank as u8, preset.header.preset as u8)).map(|x| *x as u16));
+                    let sample_infos_trimmed: BTreeMap<u16, SampleInfo> = samples_used_per_song.get(name).ok_or(DSEError::Invalid(format!("Song with name '{}' not found!", &name)))?.iter().filter_map(|x| {
+                        if let Some(mapping) = sample_mappings.get(&x.i) {
+                            Some((x.i, sample_infos.get(mapping).ok_or(DSEError::_SampleInPresetMissing(*mapping)).unwrap().clone()))
+                        } else {
+                            // The ones that are filtered out are not in this specific soundfont
+                            None
+                        }
+                    }).collect::<BTreeMap<u16, SampleInfo>>();
+                    sample_infos_merged.extend(sample_infos_trimmed);
+                } else {
+                    println!("{}Soundfont '{}' is never used! Writing will be skipped.", "Warning: ".yellow(), soundfont_name);
+                }
             }
             swdl.prgi = Some(prgi);
 
