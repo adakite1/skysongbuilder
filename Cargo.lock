@@ -364,7 +364,7 @@ checksum = "9ea835d29036a4087793836fa931b08837ad5e957da9e23886b29586fb9b6650"
 [[package]]
 name = "dse"
 version = "0.1.0"
-source = "git+https://github.com/adakite1/dse.git#1093078e64056fceb395ce2b619219cf320c1e5f"
+source = "git+https://github.com/adakite1/dse.git#128ac7f5aa513913e94dd3667a51b159f108b61c"
 dependencies = [
  "base64",
  "bevy_reflect",
@@ -386,7 +386,7 @@ dependencies = [
 [[package]]
 name = "dse-dsp-sys"
 version = "0.1.1"
-source = "git+https://github.com/adakite1/dse-dsp-sys.git#f6e11a6f24deef65080623f4d0982d8a70067a24"
+source = "git+https://github.com/adakite1/dse-dsp-sys.git#cf9a1742aca26d25e7df17b0e1876f6f8822a993"
 dependencies = [
  "adpcm-xq-sys",
  "cc",
