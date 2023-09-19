@@ -337,7 +337,6 @@ fn main() -> Result<(), DSEError> {
                         if let Some(obj_main) = &main_wavi.data.objects.iter().filter(|item| item.id == obj.id).next() {
                             obj.smplpos = pcmd.data.len() as u32;
                             pcmd.data.extend(&main_pcmd.data[(obj_main.smplpos as usize)..((obj_main.smplpos + (obj_main.loopbeg + obj_main.looplen) * 4) as usize)]);
-                            println!("{}Sample at {} in main bank", "Info: ".blue(), obj_main.smplpos);
                         }
                     }
                 }
