@@ -2,6 +2,7 @@
 
 mainbank: bgm.swd                 # Where the original game's main bank is (you can find this in the rom)
 outputdir: ./out                  # Where to output the song files (it'll make the folder if it doesn't exist)
+decoupled: false                  # false If a main bank should be generated (default); true If samples should be included separately in each song file
 dsp:                              # Settings for stuff related to audio processing
   resample_threshold: 22050       # If a sample has a sample rate above this threshold, it will automatically be resampled (in the highest-quality way possible of course) to the sample rate specified by "resample_at" below
   resample_at: 22050              # See above
