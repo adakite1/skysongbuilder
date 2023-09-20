@@ -7,8 +7,11 @@ assignees: ''
 
 ---
 
+**Description of the bug**
+A clear and concise description of what sounds different.
+
 **Expected behavior**
-A clear and concise description of what you expected to happen.
+A clear and concise description of what you expected to hear instead.
 
 **Recordings**
 If applicable, add recordings of what it should sound like played in a soundfont player, and what it actually sounds like in-game to help explain your problem.
