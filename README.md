@@ -8,9 +8,6 @@ Any Soundfonts you put in are optimized and trimmed down to what notes are playe
 - **Simple configuration**<br/>
 You just have to make one configuration file named `soundtrack.yml`. Here's an [example](https://github.com/adakite1/skysongbuilder/blob/master/soundtrack.yml) of what that might look like.
 
-- **Pretty much perfect recreation of SF2/MIDI playback**<br/>
-Since the first version of `dse`, the tool has grown to a point where it can get all the sample data, envelope values, and other perculiarities right to a point where playback of most files sound almost identical, bar DSE peculiarities in sound. Thanks to @solargress for beta testing.
-
 **How to use:**
 1. Make the config file
 2. Download the latest version here: [Releases](https://github.com/adakite1/skysongbuilder/releases)
