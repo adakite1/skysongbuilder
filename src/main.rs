@@ -1,7 +1,7 @@
 use std::{fs::File, io::Read, path::PathBuf, collections::{HashMap, HashSet, BTreeMap}, hash::Hash};
 
 use colored::Colorize;
-use dse::{dtype::{DSEError, ReadWrite, DSELinkBytes, PointerTable}, swdl::{SWDL, sf2::{copy_presets, copy_raw_sample_data, DSPOptions}, SampleInfo, create_swdl_shell, PRGIChunk, KGRPChunk, Keygroup}, smdl::{midi::{open_midi, get_midi_tpb, get_midi_messages_flattened, TrkChunkWriter, copy_midi_messages, ProgramUsed}, create_smdl_shell}};
+use dse::{dtype::{DSEError, ReadWrite, DSELinkBytes, PointerTable}, swdl::{SWDL, sf2::{copy_presets, copy_raw_sample_data, DSPOptions}, SampleInfo, create_swdl_shell, PRGIChunk, PCMDChunk, KGRPChunk, Keygroup}, smdl::{midi::{open_midi, get_midi_tpb, get_midi_messages_flattened, TrkChunkWriter, copy_midi_messages, ProgramUsed}, create_smdl_shell}};
 use fileutils::{valid_file_of_type, get_file_last_modified_date_with_default};
 use indexmap::IndexMap;
 use serde::{Serialize, Deserialize, Deserializer};
@@ -40,11 +40,16 @@ where D: Deserializer<'de> {
 const fn ppmdu_mainbank_default() -> bool {
     false
 }
+const fn decoupled_default() -> bool {
+    false
+}
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 struct SoundtrackConfig {
     mainbank: PathBuf,
     #[serde(default = "ppmdu_mainbank_default")]
     ppmdu_mainbank: bool,
+    #[serde(default = "decoupled_default")]
+    decoupled: bool,
     outputdir: PathBuf,
     dsp: DSPConfig,
     sample_rate_adjustment_curve: usize,
@@ -272,9 +277,11 @@ fn main() -> Result<(), DSEError> {
         }
 
         // Write to file
-        main_bank_swdl.regenerate_read_markers()?;
-        main_bank_swdl.regenerate_automatic_parameters()?;
-        main_bank_swdl.write_to_file(&mut open_file_overwrite_rw(soundtrack_config.outputdir.join("bgm.swd"))?)?;
+        if !soundtrack_config.decoupled {
+            main_bank_swdl.regenerate_read_markers()?;
+            main_bank_swdl.regenerate_automatic_parameters()?;
+            main_bank_swdl.write_to_file(&mut open_file_overwrite_rw(soundtrack_config.outputdir.join("bgm.swd"))?)?;
+        }
     
         // =========== SWDL ===========
 
@@ -321,10 +328,25 @@ fn main() -> Result<(), DSEError> {
             // Add the sample info objects last
             swdl.wavi.data.objects = sample_infos_merged.into_values().collect();
             // Fix the smplpos
-            let mut pos_in_memory = 0;
-            for obj in &mut swdl.wavi.data.objects {
-                obj.smplpos = pos_in_memory;
-                pos_in_memory += (obj.loopbeg + obj.looplen) * 4;
+            if soundtrack_config.decoupled {
+                let mut pcmd = PCMDChunk::default();
+                if let Some(main_pcmd) = &mut main_bank_swdl.pcmd {
+                    let main_wavi = &main_bank_swdl.wavi;
+                    for obj in &mut swdl.wavi.data.objects {
+                        // This part is awful, there may be a way to optimize searching the matching sample info in the main bank, but I don't know how
+                        if let Some(obj_main) = &main_wavi.data.objects.iter().filter(|item| item.id == obj.id).next() {
+                            obj.smplpos = pcmd.data.len() as u32;
+                            pcmd.data.extend(&main_pcmd.data[(obj_main.smplpos as usize)..((obj_main.smplpos + (obj_main.loopbeg + obj_main.looplen) * 4) as usize)]);
+                        }
+                    }
+                }
+                swdl.pcmd = Some(pcmd);
+            } else {
+                let mut pos_in_memory = 0;
+                for obj in &mut swdl.wavi.data.objects {
+                    obj.smplpos = pos_in_memory;
+                    pos_in_memory += (obj.loopbeg + obj.looplen) * 4;
+                }
             }
 
             // Keygroups
