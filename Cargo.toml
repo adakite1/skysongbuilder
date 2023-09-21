@@ -1,6 +1,6 @@
 [package]
 name = "skysongbuilder"
-version = "0.1.1-pre2"
+version = "0.1.1-pre4"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -13,7 +13,7 @@ midly = "0.5.3"
 soundfont = "0.0.2"
 chrono = "0.4.26"
 colored = "2"
-dse = { git = "https://github.com/adakite1/dse.git"}
+dse = { git = "https://github.com/adakite1/dse.git" }
 thiserror = "1.0"
 void = "1"
 indexmap = { version = "2", features = ["serde"] }
