@@ -208,7 +208,7 @@ fn main() -> Result<(), DSEError> {
                             None
                         }
                     });
-                    //TODO: An sf2 exported from VGMTrans had an extra preset after all the ones visible in Polyphone with a bank/preset number of 000:000, which messed up this check. The mystery preset at the end contains no splits, so for now, all program entries without any splits in them are ignored.
+                    //TODO: An sf2 exported from VGMTrans had an extra empty preset after all the normal ones visible in Polyphone with a bank/preset number of 000:000, which broke the assertion that each id should correspond to one preset. The likely explanation is that empty presets are meant to be ignored, and so we do that here.
                     dummy_prgi.objects.retain(|x| {
                         x.splits_table.len() > 0
                     });
@@ -314,7 +314,7 @@ fn main() -> Result<(), DSEError> {
                         soundtrack_config.sample_rate_adjustment_curve,
                         soundtrack_config.pitch_adjust,
                         |_, preset, program_info| {
-                            //TODO: An sf2 exported from VGMTrans had an extra preset after all the ones visible in Polyphone with a bank/preset number of 000:000, which messed up this check. The mystery preset at the end contains no splits, so for now, all program entries without any splits in them are ignored.
+                            //TODO: An sf2 exported from VGMTrans had an extra empty preset after all the normal ones visible in Polyphone with a bank/preset number of 000:000, which broke the assertion that each id should correspond to one preset. The likely explanation is that empty presets are meant to be ignored, and so we do that here.
                             if program_info.splits_table.len() > 0 {
                                 song_preset_map.get(&(preset.header.bank as u8, preset.header.preset as u8)).map(|x| *x as u16)   
                             } else {
