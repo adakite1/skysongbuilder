@@ -14,6 +14,8 @@ use thiserror::Error;
 mod deserialize_with;
 mod fileutils;
 
+const VERSION: Option<&str> = option_env!("CARGO_PKG_VERSION");
+
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 struct SongConfig {
     i: usize,

@@ -854,7 +854,7 @@ checksum = "38b58827f4464d87d377d175e90bf58eb00fd8716ff0a62f80356b5e61555d0d"
 
 [[package]]
 name = "skysongbuilder"
-version = "0.1.1-pre4"
+version = "0.1.1-pre5"
 dependencies = [
  "chrono",
  "colored",
