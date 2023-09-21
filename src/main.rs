@@ -208,6 +208,10 @@ fn main() -> Result<(), DSEError> {
                             None
                         }
                     });
+                    //TODO: An sf2 exported from VGMTrans had an extra preset after all the ones visible in Polyphone with a bank/preset number of 000:000, which messed up this check. The mystery preset at the end contains no splits, so for now, all program entries without any splits in them are ignored.
+                    dummy_prgi.objects.retain(|x| {
+                        x.splits_table.len() > 0
+                    });
                     assert!(dummy_prgi.objects.len() <= 1); //TODO: Low priority, but replace this with an actual error. This should never happen.
                     for program in dummy_prgi.objects {
                         for split in program.splits_table.objects {
@@ -309,7 +313,14 @@ fn main() -> Result<(), DSEError> {
                         |i| sample_mappings.get(&i).copied(),
                         soundtrack_config.sample_rate_adjustment_curve,
                         soundtrack_config.pitch_adjust,
-                        |_, preset, _| song_preset_map.get(&(preset.header.bank as u8, preset.header.preset as u8)).map(|x| *x as u16));
+                        |_, preset, program_info| {
+                            //TODO: An sf2 exported from VGMTrans had an extra preset after all the ones visible in Polyphone with a bank/preset number of 000:000, which messed up this check. The mystery preset at the end contains no splits, so for now, all program entries without any splits in them are ignored.
+                            if program_info.splits_table.len() > 0 {
+                                song_preset_map.get(&(preset.header.bank as u8, preset.header.preset as u8)).map(|x| *x as u16)   
+                            } else {
+                                None
+                            }
+                        });
                     let sample_infos_trimmed: BTreeMap<u16, SampleInfo> = samples_used_per_song.get(name).ok_or(DSEError::Invalid(format!("Song with name '{}' not found!", &name)))?.iter().filter_map(|x| {
                         if let Some(mapping) = sample_mappings.get(&x.i) {
                             Some((x.i, sample_infos.get(mapping).ok_or(DSEError::_SampleInPresetMissing(*mapping)).unwrap().clone()))
