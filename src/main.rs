@@ -1,7 +1,7 @@
 use std::{fs::File, io::Read, path::PathBuf, collections::{HashMap, HashSet, BTreeMap}, hash::Hash};
 
 use colored::Colorize;
-use dse::{dtype::{DSEError, ReadWrite, DSELinkBytes, PointerTable}, swdl::{SWDL, sf2::{copy_presets, copy_raw_sample_data, DSPOptions}, SampleInfo, create_swdl_shell, PRGIChunk, PCMDChunk, KGRPChunk, Keygroup}, smdl::{midi::{open_midi, get_midi_tpb, get_midi_messages_flattened, TrkChunkWriter, copy_midi_messages, ProgramUsed}, create_smdl_shell}};
+use dse::{dtype::{DSEError, ReadWrite, DSELinkBytes, PointerTable}, swdl::{SWDL, sf2::{copy_presets, copy_raw_sample_data, DSPOptions, SongBuilderFlags}, SampleInfo, create_swdl_shell, PRGIChunk, PCMDChunk, KGRPChunk, Keygroup}, smdl::{midi::{open_midi, get_midi_tpb, get_midi_messages_flattened, TrkChunkWriter, copy_midi_messages, ProgramUsed}, create_smdl_shell}};
 use fileutils::{valid_file_of_type, get_file_last_modified_date_with_default};
 use indexmap::IndexMap;
 use serde::{Serialize, Deserialize, Deserializer};
@@ -52,6 +52,7 @@ struct SoundtrackConfig {
     ppmdu_mainbank: bool,
     #[serde(default = "decoupled_default")]
     decoupled: bool,
+    flags: SongBuilderFlags,
     outputdir: PathBuf,
     dsp: DSPConfig,
     sample_rate_adjustment_curve: usize,
@@ -244,13 +245,35 @@ fn main() -> Result<(), DSEError> {
         // Read in the main bank swd file
         let mut main_bank_swdl;
         if valid_file_of_type(&soundtrack_config.mainbank, "swd") {
+            let flags = SongBuilderFlags::parse_from_swdl_file(&mut File::open(soundtrack_config.mainbank.clone())?)?;
+
             main_bank_swdl = SWDL::default();
             println!("[*] Opening mainbank {:?}", soundtrack_config.mainbank);
-            main_bank_swdl.read_from_file(&mut File::open(&soundtrack_config.mainbank)?)?;
+            if flags.contains(SongBuilderFlags::FULL_POINTER_EXTENSION) {
+                main_bank_swdl.read_from_file::<u32, u32, _>(&mut File::open(&soundtrack_config.mainbank)?)?;
+            } else if flags.contains(SongBuilderFlags::WAVI_POINTER_EXTENSION) {
+                main_bank_swdl.read_from_file::<u32, u16, _>(&mut File::open(&soundtrack_config.mainbank)?)?;
+            } else if flags.contains(SongBuilderFlags::PRGI_POINTER_EXTENSION) {
+                main_bank_swdl.read_from_file::<u16, u32, _>(&mut File::open(&soundtrack_config.mainbank)?)?;
+            } else {
+                main_bank_swdl.read_from_file::<u16, u16, _>(&mut File::open(&soundtrack_config.mainbank)?)?;
+            }
         } else if valid_file_of_type(&soundtrack_config.mainbank, "xml") {
             let st = std::fs::read_to_string(&soundtrack_config.mainbank)?;
             main_bank_swdl = quick_xml::de::from_str::<SWDL>(&st)?;
-            main_bank_swdl.regenerate_read_markers()?;
+
+            let flags = SongBuilderFlags::parse_from_swdl(&main_bank_swdl);
+
+            if flags.contains(SongBuilderFlags::FULL_POINTER_EXTENSION) {
+                main_bank_swdl.regenerate_read_markers::<u32, u32>()?;
+            } else if flags.contains(SongBuilderFlags::WAVI_POINTER_EXTENSION) {
+                main_bank_swdl.regenerate_read_markers::<u32, u16>()?;
+            } else if flags.contains(SongBuilderFlags::PRGI_POINTER_EXTENSION) {
+                main_bank_swdl.regenerate_read_markers::<u16, u32>()?;
+            } else {
+                main_bank_swdl.regenerate_read_markers::<u16, u16>()?;
+            }
+
             main_bank_swdl.regenerate_automatic_parameters()?;
         } else {
             return Err(DSEError::Invalid("Provided Main Bank SWD file is not an SWD file!".to_string()));
@@ -284,9 +307,23 @@ fn main() -> Result<(), DSEError> {
 
         // Write to file
         if !soundtrack_config.decoupled {
-            main_bank_swdl.regenerate_read_markers()?;
-            main_bank_swdl.regenerate_automatic_parameters()?;
-            main_bank_swdl.write_to_file(&mut open_file_overwrite_rw(soundtrack_config.outputdir.join("bgm.swd"))?)?;
+            if soundtrack_config.flags.contains(SongBuilderFlags::FULL_POINTER_EXTENSION) {
+                main_bank_swdl.regenerate_read_markers::<u32, u32>()?;
+                main_bank_swdl.regenerate_automatic_parameters()?;
+                main_bank_swdl.write_to_file::<u32, u32, _>(&mut open_file_overwrite_rw(soundtrack_config.outputdir.join("bgm.swd"))?)?;
+            } else if soundtrack_config.flags.contains(SongBuilderFlags::WAVI_POINTER_EXTENSION) {
+                main_bank_swdl.regenerate_read_markers::<u32, u16>()?;
+                main_bank_swdl.regenerate_automatic_parameters()?;
+                main_bank_swdl.write_to_file::<u32, u16, _>(&mut open_file_overwrite_rw(soundtrack_config.outputdir.join("bgm.swd"))?)?;
+            } else if soundtrack_config.flags.contains(SongBuilderFlags::PRGI_POINTER_EXTENSION) {
+                main_bank_swdl.regenerate_read_markers::<u16, u32>()?;
+                main_bank_swdl.regenerate_automatic_parameters()?;
+                main_bank_swdl.write_to_file::<u16, u32, _>(&mut open_file_overwrite_rw(soundtrack_config.outputdir.join("bgm.swd"))?)?;
+            } else {
+                main_bank_swdl.regenerate_read_markers::<u16, u16>()?;
+                main_bank_swdl.regenerate_automatic_parameters()?;
+                main_bank_swdl.write_to_file::<u16, u16, _>(&mut open_file_overwrite_rw(soundtrack_config.outputdir.join("bgm.swd"))?)?;
+            }
         }
     
         // =========== SWDL ===========
@@ -381,9 +418,23 @@ fn main() -> Result<(), DSEError> {
             swdl.kgrp = Some(kgrp);
 
             // Write to file
-            swdl.regenerate_read_markers()?;
-            swdl.regenerate_automatic_parameters()?;
-            swdl.write_to_file(&mut open_file_overwrite_rw(soundtrack_config.outputdir.join(format!("bgm{:04}.swd", song_config.i)))?)?;
+            if soundtrack_config.flags.contains(SongBuilderFlags::FULL_POINTER_EXTENSION) {
+                swdl.regenerate_read_markers::<u32, u32>()?;
+                swdl.regenerate_automatic_parameters()?;
+                swdl.write_to_file::<u32, u32, _>(&mut open_file_overwrite_rw(soundtrack_config.outputdir.join(format!("bgm{:04}.swd", song_config.i)))?)?;
+            } else if soundtrack_config.flags.contains(SongBuilderFlags::WAVI_POINTER_EXTENSION) {
+                swdl.regenerate_read_markers::<u32, u16>()?;
+                swdl.regenerate_automatic_parameters()?;
+                swdl.write_to_file::<u32, u16, _>(&mut open_file_overwrite_rw(soundtrack_config.outputdir.join(format!("bgm{:04}.swd", song_config.i)))?)?;
+            } else if soundtrack_config.flags.contains(SongBuilderFlags::PRGI_POINTER_EXTENSION) {
+                swdl.regenerate_read_markers::<u16, u32>()?;
+                swdl.regenerate_automatic_parameters()?;
+                swdl.write_to_file::<u16, u32, _>(&mut open_file_overwrite_rw(soundtrack_config.outputdir.join(format!("bgm{:04}.swd", song_config.i)))?)?;
+            } else {
+                swdl.regenerate_read_markers::<u16, u16>()?;
+                swdl.regenerate_automatic_parameters()?;
+                swdl.write_to_file::<u16, u16, _>(&mut open_file_overwrite_rw(soundtrack_config.outputdir.join(format!("bgm{:04}.swd", song_config.i)))?)?;
+            }
         }
     } else {
         println!("{}Failed to find soundtrack.yml file!", "Error: ".red());
