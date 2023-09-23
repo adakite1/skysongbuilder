@@ -13,3 +13,5 @@ You just have to make one configuration file named `soundtrack.yml`. Here's an [
 2. Download the latest version here: [Releases](https://github.com/adakite1/skysongbuilder/releases)
 3. Run it (best to do inside PowerShell so you can see any errors that happen)
 4. You're done!
+
+See the [FAQ](https://github.com/adakite1/skysongbuilder/wiki/FAQ) for answers to a list of common questions and issues.
