@@ -45,6 +45,9 @@ const fn ppmdu_mainbank_default() -> bool {
 const fn decoupled_default() -> bool {
     false
 }
+const fn flags_default() -> SongBuilderFlags {
+    SongBuilderFlags::empty()
+}
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 struct SoundtrackConfig {
     mainbank: PathBuf,
@@ -52,6 +55,7 @@ struct SoundtrackConfig {
     ppmdu_mainbank: bool,
     #[serde(default = "decoupled_default")]
     decoupled: bool,
+    #[serde(default = "flags_default")]
     flags: SongBuilderFlags,
     outputdir: PathBuf,
     dsp: DSPConfig,
