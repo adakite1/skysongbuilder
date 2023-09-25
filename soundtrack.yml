@@ -1,4 +1,4 @@
-#skysongbuilder 0.1.0
+#skysongbuilder 0.1.2-pre
 
 mainbank: bgm.swd                 # Where the original game's main bank is (you can find this in the rom)
 outputdir: ./out                  # Where to output the song files (it'll make the folder if it doesn't exist)
