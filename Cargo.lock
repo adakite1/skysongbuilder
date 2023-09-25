@@ -357,7 +357,7 @@ checksum = "9ea835d29036a4087793836fa931b08837ad5e957da9e23886b29586fb9b6650"
 [[package]]
 name = "dse"
 version = "0.1.0"
-source = "git+https://github.com/adakite1/dse.git#f9f721ad904211a28172cb2023d12092619793a6"
+source = "git+https://github.com/adakite1/dse.git#3d8488e3513bc0688fbfccd41f46c2f3838fc14a"
 dependencies = [
  "base64",
  "bevy_reflect",
