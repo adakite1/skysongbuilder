@@ -1,7 +1,7 @@
 use std::{fs::File, io::Read, path::PathBuf, collections::{HashMap, HashSet, BTreeMap}, hash::Hash};
 
 use colored::Colorize;
-use dse::{dtype::{DSEError, ReadWrite, DSELinkBytes, PointerTable}, swdl::{SWDL, sf2::{copy_presets, copy_raw_sample_data, DSPOptions, SongBuilderFlags}, SampleInfo, create_swdl_shell, PRGIChunk, PCMDChunk, KGRPChunk, Keygroup}, smdl::{midi::{open_midi, get_midi_tpb, get_midi_messages_flattened, TrkChunkWriter, copy_midi_messages, ProgramUsed}, create_smdl_shell}};
+use dse::{dtype::{DSEError, ReadWrite, DSELinkBytes, PointerTable}, swdl::{SWDL, sf2::{copy_presets, copy_raw_sample_data, DSPOptions, SongBuilderFlags, SetSongBuilderFlags}, SampleInfo, create_swdl_shell, PRGIChunk, PCMDChunk, KGRPChunk, Keygroup}, smdl::{midi::{open_midi, get_midi_tpb, get_midi_messages_flattened, TrkChunkWriter, copy_midi_messages, ProgramUsed}, create_smdl_shell}};
 use fileutils::{valid_file_of_type, get_file_last_modified_date_with_default};
 use indexmap::IndexMap;
 use serde::{Serialize, Deserialize, Deserializer};
@@ -311,6 +311,7 @@ fn main() -> Result<(), DSEError> {
 
         // Write to file
         if !soundtrack_config.decoupled {
+            main_bank_swdl.set_song_builder_flags(soundtrack_config.flags);
             if soundtrack_config.flags.contains(SongBuilderFlags::FULL_POINTER_EXTENSION) {
                 main_bank_swdl.regenerate_read_markers::<u32, u32>()?;
                 main_bank_swdl.regenerate_automatic_parameters()?;
@@ -422,6 +423,7 @@ fn main() -> Result<(), DSEError> {
             swdl.kgrp = Some(kgrp);
 
             // Write to file
+            swdl.set_song_builder_flags(soundtrack_config.flags);
             if soundtrack_config.flags.contains(SongBuilderFlags::FULL_POINTER_EXTENSION) {
                 swdl.regenerate_read_markers::<u32, u32>()?;
                 swdl.regenerate_automatic_parameters()?;
