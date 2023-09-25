@@ -10,6 +10,17 @@ dsp:                              # Settings for stuff related to audio processi
 sample_rate_adjustment_curve: 1   # Default is good
 pitch_adjust: 0                   # Adjust the pitch of everything (in cents)
 
+## These are advanced options, use with care. Leave it as it is for normal usage.
+### WAVI_POINTER_EXTENSION
+###  - This flag extends the 16-bit pointers used by the sample bank WAVI chunks to use 32-bit pointers instead. Only generated files are modified, input swd files can have either, and SkySongBuilder will read them accordingly.
+###  - Effects: Increases the number of samples allowed in each bank file to around 65,535 samples (theoretical, untested). (applicable to the massive main bank)
+###  - Requirements: The `MoreSamplesAndPresets` patch (requires `ExtraSpace`)
+### PRGI_POINTER_EXTENSION
+###  - This flag extends the 16-bit pointers used by the sample bank PRGI chunks to use 32-bit pointers instead. Only generated files are modified, input swd files can have either, and SkySongBuilder will read them accordingly.
+###  - Effects: Increases the number and size of presets allowed in each bank file.
+###  - Requirements: The `MoreSamplesAndPresets` patch (requires `ExtraSpace`)
+flags: # WAVI_POINTER_EXTENSION | PRGI_POINTER_EXTENSION
+
 # Add soundfonts here
 soundfonts:
   Main Bank: out_bgm.sf2
