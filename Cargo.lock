@@ -357,7 +357,7 @@ checksum = "9ea835d29036a4087793836fa931b08837ad5e957da9e23886b29586fb9b6650"
 [[package]]
 name = "dse"
 version = "0.1.0"
-source = "git+https://github.com/adakite1/dse.git#ca30f4d6cbf7e72eacb7b72978afcac62bf4445b"
+source = "git+https://github.com/adakite1/dse.git#02af2ea3149e39659592cd5d978ff2b908663d0e"
 dependencies = [
  "base64",
  "bevy_reflect",
@@ -859,7 +859,7 @@ checksum = "38b58827f4464d87d377d175e90bf58eb00fd8716ff0a62f80356b5e61555d0d"
 
 [[package]]
 name = "skysongbuilder"
-version = "0.1.2-pre4"
+version = "0.1.2-pre5"
 dependencies = [
  "chrono",
  "colored",
