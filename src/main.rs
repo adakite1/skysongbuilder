@@ -228,8 +228,9 @@ fn main() -> Result<(), DSEError> {
                     assert!(dummy_prgi.objects.len() <= 1); //TODO: Low priority, but replace this with an actual error. This should never happen.
                     for program in dummy_prgi.objects {
                         for split in program.splits_table.objects {
-                            let range = split.lowkey as u8..=split.hikey as u8;
-                            if notes.iter().any(|x| range.contains(x)) {
+                            let key_range = split.lowkey as u8..=split.hikey as u8;
+                            let vel_range = split.lovel as u8..=split.hivel as u8;
+                            if notes.iter().any(|(key, vels)| key_range.contains(key) && vels.iter().any(|vel| vel_range.contains(vel))) {
                                 samples_used.entry(song_config.uses[soundfont_i].clone()).or_insert(HashSet::new())
                                     .insert(SampleEntry { i: split.SmplID, sample_header: &sf2.sample_headers[split.SmplID as usize] });
                                 samples_used_per_song.entry(name.clone()).or_insert(HashSet::new())
