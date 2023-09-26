@@ -1,7 +1,7 @@
-use std::{fs::File, io::Read, path::PathBuf, collections::{HashMap, HashSet, BTreeMap}, hash::Hash};
+use std::{fs::File, io::{Read, Write}, path::PathBuf, collections::{HashMap, HashSet, BTreeMap}, hash::Hash};
 
 use colored::Colorize;
-use dse::{dtype::{DSEError, ReadWrite, DSELinkBytes, PointerTable}, swdl::{SWDL, sf2::{copy_presets, copy_raw_sample_data, DSPOptions, SongBuilderFlags, SetSongBuilderFlags}, SampleInfo, create_swdl_shell, PRGIChunk, PCMDChunk, KGRPChunk, Keygroup}, smdl::{midi::{open_midi, get_midi_tpb, get_midi_messages_flattened, TrkChunkWriter, copy_midi_messages, ProgramUsed}, create_smdl_shell}};
+use dse::{dtype::{DSEError, ReadWrite, DSELinkBytes, PointerTable}, swdl::{SWDL, sf2::{copy_presets, copy_raw_sample_data, DSPOptions, SongBuilderFlags, SetSongBuilderFlags}, SampleInfo, create_swdl_shell, PRGIChunk, PCMDChunk, KGRPChunk, Keygroup}, smdl::{midi::{open_midi, get_midi_tpb, get_midi_messages_flattened, TrkChunkWriter, copy_midi_messages, ProgramUsed}, create_smdl_shell, DSEEvent}};
 use fileutils::{valid_file_of_type, get_file_last_modified_date_with_default};
 use indexmap::IndexMap;
 use serde::{Serialize, Deserialize, Deserializer};
@@ -161,34 +161,40 @@ fn main() -> Result<(), DSEError> {
             // Vec of TrkChunkWriter's
             let mut trks: [TrkChunkWriter; 17] = std::array::from_fn(|i| TrkChunkWriter::create(i as u8, i as u8, smdl.get_link_bytes(), None).unwrap());
             // Copy midi messages
+
+            let mut used_presets: IndexMap<u8, Vec<(usize, (u8, u8))>> = IndexMap::new();
+            let _ = copy_midi_messages(midi_messages, &mut trks, |trkid, bank, program, same_tick, trk_chunk_writer| {
+                if same_tick {
+                    // Discard last. If same_tick is true, then a previous preset change has already been recorded, so this is guaranteed to remove the correct entry.
+                    used_presets.entry(trkid).or_insert(Vec::new()).pop();
+                }
+                used_presets.entry(trkid).or_insert(Vec::new()).push((trk_chunk_writer.next_event_index(), (bank, program)));
+                // Insert the event for now, fixing it later to be the correct value
+                Some(0)
+            })?;
             let mut song_preset_map: HashMap<(u8, u8), u8> = HashMap::new();
             let mut current_id = 0_u8;
-            let mut staging = None;
-            let _ = copy_midi_messages(midi_messages, &mut trks, |bank, program, same_tick| {
-                if same_tick {
-                    // Discard
-                    if let Some(((_, _), recyclable_id)) = staging.take() {
-                        current_id = recyclable_id;
+            for (trkid, used_presets) in used_presets.into_iter() {
+                for (event_index, (bank, program)) in used_presets {
+                    println!("trk{:02} {} bank{} prgm{}", trkid, event_index, bank, program);
+                    let program_id;
+                    if let Some(&existing_program_id) = song_preset_map.get(&(bank, program)) {
+                        program_id = existing_program_id;
+                    } else {
+                        // Assign new
+                        let assigned_id = current_id;
+                        current_id += 1;
+                        song_preset_map.insert((bank, program), assigned_id);
+                        program_id = assigned_id;
                     }
-                } else {
-                    // Move entry from staging to the actual hashmap
-                    if let Some((key, value)) = staging.take() {
-                        song_preset_map.insert(key, value);
+                    if let Some(evt) = trks[trkid as usize].get_event_mut(event_index) {
+                        if let DSEEvent::Other(evt) = &mut evt.1 {
+                            (&mut evt.parameters[..]).write_all(&[program_id])?;
+                        }
+                    } else {
+                        panic!("{}TrkChunkWriter's internal event list must never have items removed from it! However, a previously valid index is now missing!!", "Internal Error: ".red());
                     }
                 }
-                if let Some(&program_id) = song_preset_map.get(&(bank, program)) {
-                    Some(program_id)
-                } else {
-                    // Assign new
-                    let assigned_id = current_id;
-                    current_id += 1;
-                    staging = Some(((bank, program), assigned_id));
-                    Some(assigned_id)
-                }
-            })?;
-            // Move the last entry, if there is one, from staging to the actual hashmap
-            if let Some((key, value)) = staging.take() {
-                song_preset_map.insert(key, value);
             }
 
             // Fill the tracks into the smdl
