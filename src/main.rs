@@ -1,11 +1,11 @@
 use std::{fs::File, io::{Read, Write}, path::PathBuf, collections::{HashMap, HashSet, BTreeMap}, hash::Hash};
 
 use colored::Colorize;
-use dse::{dtype::{DSEError, ReadWrite, DSELinkBytes, PointerTable}, swdl::{SWDL, sf2::{copy_presets, copy_raw_sample_data, DSPOptions, SongBuilderFlags, SetSongBuilderFlags}, SampleInfo, create_swdl_shell, PRGIChunk, PCMDChunk, KGRPChunk, Keygroup}, smdl::{midi::{open_midi, get_midi_tpb, get_midi_messages_flattened, TrkChunkWriter, copy_midi_messages, ProgramUsed}, create_smdl_shell, DSEEvent}};
+use dse::{dtype::{DSEError, ReadWrite, DSELinkBytes, PointerTable}, swdl::{SWDL, sf2::{copy_presets, copy_raw_sample_data, DSPOptions, SongBuilderFlags, SetSongBuilderFlags, find_in_zones}, SampleInfo, create_swdl_shell, PRGIChunk, PCMDChunk, KGRPChunk, Keygroup}, smdl::{midi::{open_midi, get_midi_tpb, get_midi_messages_flattened, TrkChunkWriter, copy_midi_messages, ProgramUsed}, create_smdl_shell, DSEEvent}};
 use fileutils::{valid_file_of_type, get_file_last_modified_date_with_default};
 use indexmap::IndexMap;
 use serde::{Serialize, Deserialize, Deserializer};
-use soundfont::{data::SampleHeader, Preset, SoundFont2};
+use soundfont::{data::SampleHeader, Preset, SoundFont2, Instrument, Zone};
 
 use crate::fileutils::open_file_overwrite_rw;
 
@@ -83,6 +83,23 @@ impl<'a> Hash for SampleEntry<'a> {
 }
 
 #[derive(Debug)]
+struct InstrumentMappingEntry<'a> {
+    i: usize,
+    zone: &'a Zone
+}
+impl<'a> PartialEq for InstrumentMappingEntry<'a> {
+    fn eq(&self, other: &Self) -> bool {
+        std::ptr::eq(self.zone, other.zone)
+    }
+}
+impl<'a> Eq for InstrumentMappingEntry<'a> {  }
+impl<'a> Hash for InstrumentMappingEntry<'a> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        (self.zone as *const Zone).hash(state);
+    }
+}
+
+#[derive(Debug)]
 struct PresetEntry<'a> {
     i: usize,
     preset: &'a Preset
@@ -118,6 +135,7 @@ fn main() -> Result<(), DSEError> {
         // Keep track of which presets and samples are actually used by the MIDI
         let mut samples_used: HashMap<String, HashSet<SampleEntry>> = HashMap::new();
         let mut samples_used_per_song: HashMap<String, HashSet<SampleEntry>> = HashMap::new();
+        let mut instrument_mappings_used: HashMap<String, HashSet<InstrumentMappingEntry>> = HashMap::new();
         let mut presets_used: HashMap<String, HashSet<PresetEntry>> = HashMap::new();
         let mut presets_used_per_song: HashMap<String, HashSet<PresetEntry>> = HashMap::new();
 
@@ -158,12 +176,9 @@ fn main() -> Result<(), DSEError> {
 
             let midi_messages = get_midi_messages_flattened(&smf)?;
 
-            // Vec of TrkChunkWriter's
-            let mut trks: [TrkChunkWriter; 17] = std::array::from_fn(|i| TrkChunkWriter::create(i as u8, i as u8, smdl.get_link_bytes(), None).unwrap());
             // Copy midi messages
-
             let mut used_presets: IndexMap<u8, Vec<(usize, (u8, u8))>> = IndexMap::new();
-            let _ = copy_midi_messages(midi_messages, &mut trks, |trkid, bank, program, same_tick, trk_chunk_writer| {
+            let mut map_program = |trkid, bank, program, same_tick, trk_chunk_writer: &mut TrkChunkWriter| {
                 if same_tick {
                     // Discard last. If same_tick is true, then a previous preset change has already been recorded, so this is guaranteed to remove the correct entry.
                     used_presets.entry(trkid).or_insert(Vec::new()).pop();
@@ -171,7 +186,18 @@ fn main() -> Result<(), DSEError> {
                 used_presets.entry(trkid).or_insert(Vec::new()).push((trk_chunk_writer.next_event_index(), (bank, program)));
                 // Insert the event for now, fixing it later to be the correct value
                 Some(0)
-            })?;
+            };
+            // Vec of TrkChunkWriter's
+            let mut trks: [TrkChunkWriter; 17] = std::array::from_fn(|i| {
+                let mut trk = TrkChunkWriter::create(i as u8, i as u8, smdl.get_link_bytes()).unwrap();
+                // Most soundfont players default to preset 000:000 if no MIDI Bank Select and Program Change messages are found. This matches that behavior.
+                if i != 0 { // Avoid writing the default patch select messages onto the meta track
+                    let _ = trk.bank_select(0, true, &mut map_program); // The results can be ignored since the only failure condition is if the DSE opcode "SetProgram" could not be found, which would be very bad if that happened and this wouldn't be able to recover anyways.
+                    let _ = trk.program_change(0, true, &mut map_program);
+                }
+                trk
+            });
+            let _ = copy_midi_messages(midi_messages, &mut trks, &mut map_program)?;
             let mut song_preset_map: HashMap<(u8, u8), u8> = HashMap::new();
             let mut current_id = 0_u8;
             for (trkid, used_presets) in used_presets.into_iter() {
@@ -201,8 +227,13 @@ fn main() -> Result<(), DSEError> {
             let track_soundfonts = song_config.uses.iter().map(|soundfont_name| soundfonts.get(soundfont_name).ok_or(DSEError::Invalid(format!("Soundfont with name '{}' not found!", soundfont_name)))).collect::<Result<Vec<&SoundFont2>, _>>()?;
             smdl.trks.objects = Vec::with_capacity(trks.len());
             for x in trks {
-                for ProgramUsed { bank, program, notes } in x.programs_used() {
-                    let (soundfont_i, preset_i) = find_preset_in_soundfonts(&track_soundfonts, *bank as u16, *program as u16).ok_or(DSEError::Invalid(format!("Preset {:03}:{:03} not found in any of the specified soundfonts for song '{}'!", bank, program, name)))?;
+                for ProgramUsed { bank, program, notes, is_default } in x.programs_used() {
+                    let find_preset = find_preset_in_soundfonts(&track_soundfonts, *bank as u16, *program as u16);
+                    if find_preset.is_none() && *is_default {
+                        println!("{}None of the following soundfonts {:?} used by a track contain a default 000:000 piano preset! Any MIDI tracks lacking MIDI Bank Select and Program Change messages will cause the tool to fail!", "Warning: ".yellow(), song_config.uses);
+                        continue;
+                    }
+                    let (soundfont_i, preset_i) = find_preset.ok_or(DSEError::Invalid(format!("Preset {:03}:{:03} not found in any of the specified soundfonts for song '{}'!", bank, program, name)))?;
                     let sf2 = soundfonts.get(&song_config.uses[soundfont_i]).ok_or(DSEError::Invalid(format!("Soundfont with name '{}' not found!", &song_config.uses[soundfont_i])))?;
                     presets_used.entry(song_config.uses[soundfont_i].clone()).or_insert(HashSet::new())
                         .insert(PresetEntry { i: preset_i, preset: &sf2.presets[preset_i] });
@@ -210,17 +241,68 @@ fn main() -> Result<(), DSEError> {
                         .insert(PresetEntry { i: preset_i, preset: &sf2.presets[preset_i] });
 
                     let mut dummy_prgi = PointerTable::new(0, 0);
+                    let mut preset_zones_used_for_soundfont_indices = Vec::new();
                     copy_presets(sf2, &mut (0..sf2.sample_headers.len()).into_iter().map(|i| {
                         let mut dummy_smpl = SampleInfo::default();
                         dummy_smpl.smplrate = 44100;
                         (i as u16, dummy_smpl)
-                    }).collect::<BTreeMap<u16, SampleInfo>>(), &mut dummy_prgi, |x| Some(x), 1, 0, |_, preset, _| {
+                    }).collect::<BTreeMap<u16, SampleInfo>>(), &mut dummy_prgi, |x| Some(x), 1, 0, |preset, global_preset_zone, preset_zone_i, preset_zone, instrument_i, instrument| {
+                        // When this is called, the instrument is guaranteed to not be a global instrument
+                        let mut preset_zones_to_search = vec![preset_zone];
+                        if let Some(global_preset_zone) = global_preset_zone {
+                            preset_zones_to_search.push(global_preset_zone);
+                        }
+                        // By default, keep the instrument
+                        let mut keep = preset.header.bank == *bank as u16 && preset.header.preset == *program as u16;
+                        let key_range;
+                        let vel_range;
+                        // Check the instrument's key range, if it is specified
+                        if let Some(gen) = find_in_zones(&preset_zones_to_search, soundfont::data::GeneratorType::KeyRange) {
+                            let key_range_value = gen.amount.as_range().unwrap();
+                            let lowkey = key_range_value.low as i8;
+                            let hikey = key_range_value.high as i8;
+                            key_range = Some(lowkey as u8..=hikey as u8);
+                        } else {
+                            key_range = None;
+                        }
+                        // Check the instrument's velocity range, if it is specified
+                        if let Some(gen) = find_in_zones(&preset_zones_to_search, soundfont::data::GeneratorType::VelRange) {
+                            let vel_range_value = gen.amount.as_range().unwrap();
+                            let lovel = vel_range_value.low as i8;
+                            let hivel = vel_range_value.high as i8;
+                            vel_range = Some(lovel as u8..=hivel as u8);
+                        } else {
+                            vel_range = None;
+                        }
+                        // Check for all possibilities of the two ranges existing
+                        if let (Some(key_range), Some(vel_range)) = (&key_range, &vel_range) {
+                            keep = keep && notes.iter().any(|(key, vels)| key_range.contains(key) && vels.iter().any(|vel| vel_range.contains(vel)));
+                        } else if let Some(key_range) = &key_range {
+                            keep = keep && notes.iter().any(|(key, _)| key_range.contains(key));
+                        } else if let Some(vel_range) = &vel_range {
+                            keep = keep && notes.iter().any(|(_, vels)| vels.iter().any(|vel| vel_range.contains(vel)));
+                        }
+                        // Make a record of if this instrument is used or not (only the index can be saved, and so a second step is necessary to actually turn these indices into references, which is done outside of this closure)
+                        if keep {
+                            preset_zones_used_for_soundfont_indices.push(preset_zone_i);
+                        }
+                        keep
+                    }, |_, preset, _| {
                         if preset.header.bank == *bank as u16 && preset.header.preset == *program as u16 {
                             Some(0)
                         } else {
                             None
                         }
                     });
+                    // Turn the preset zone (individual instrument mappings) indices for instruments used into actual references to the preset zones
+                    for preset_zone_i in preset_zones_used_for_soundfont_indices {
+                        if let Some(preset) = sf2.presets.iter().find(|preset| preset.header.bank == *bank as u16 && preset.header.preset == *program as u16) {
+                            instrument_mappings_used.entry(song_config.uses[soundfont_i].clone()).or_insert(HashSet::new())
+                                .insert(InstrumentMappingEntry { i: preset_zone_i, zone: &preset.zones[preset_zone_i as usize] });
+                        } else {
+                            panic!("{}Failed to find a previously-marked preset!", "Internal Error: ".red());
+                        }
+                    }
                     //TODO: An sf2 exported from VGMTrans had an extra empty preset after all the normal ones visible in Polyphone with a bank/preset number of 000:000, which broke the assertion that each id should correspond to one preset. The likely explanation is that empty presets are meant to be ignored, and so we do that here.
                     dummy_prgi.objects.retain(|x| {
                         x.splits_table.len() > 0
@@ -356,31 +438,34 @@ fn main() -> Result<(), DSEError> {
             let mut sample_infos_merged = BTreeMap::new();
             for (soundfont_name, &sf2) in song_config.uses.iter().zip(track_soundfonts.iter()) {
                 if let Some((sample_mappings, sample_infos)) = sample_mapping_information.get(soundfont_name) {
-                    let mut sample_infos = sample_infos.clone();
-                    copy_presets(
-                        sf2,
-                        &mut sample_infos,
-                        &mut prgi.data,
-                        |i| sample_mappings.get(&i).copied(),
-                        soundtrack_config.sample_rate_adjustment_curve,
-                        soundtrack_config.pitch_adjust,
-                        |_, preset, program_info| {
-                            //TODO: An sf2 exported from VGMTrans had an extra empty preset after all the normal ones visible in Polyphone with a bank/preset number of 000:000, which broke the assertion that each id should correspond to one preset. The likely explanation is that empty presets are meant to be ignored, and so we do that here.
-                            if program_info.splits_table.len() > 0 {
-                                song_preset_map.get(&(preset.header.bank as u8, preset.header.preset as u8)).map(|x| *x as u16)   
+                    if let Some(instrument_mappings_used_for_soundfont) = instrument_mappings_used.get(soundfont_name) {
+                        let mut sample_infos = sample_infos.clone();
+                        copy_presets(
+                            sf2,
+                            &mut sample_infos,
+                            &mut prgi.data,
+                            |i| sample_mappings.get(&i).copied(),
+                            soundtrack_config.sample_rate_adjustment_curve,
+                            soundtrack_config.pitch_adjust,
+                            |_, _, _, preset_zone, _, _| instrument_mappings_used_for_soundfont.get(&InstrumentMappingEntry { i: 0, zone: preset_zone }).is_some(),
+                            |_, preset, program_info| {
+                                //TODO: An sf2 exported from VGMTrans had an extra empty preset after all the normal ones visible in Polyphone with a bank/preset number of 000:000, which broke the assertion that each id should correspond to one preset. The likely explanation is that empty presets are meant to be ignored, and so we do that here.
+                                if program_info.splits_table.len() > 0 {
+                                    song_preset_map.get(&(preset.header.bank as u8, preset.header.preset as u8)).map(|x| *x as u16)   
+                                } else {
+                                    None
+                                }
+                            });
+                        let sample_infos_trimmed: BTreeMap<u16, SampleInfo> = samples_used_per_song.get(name).ok_or(DSEError::Invalid(format!("Song with name '{}' not found!", &name)))?.iter().filter_map(|x| {
+                            if let Some(mapping) = sample_mappings.get(&x.i) {
+                                Some((x.i, sample_infos.get(mapping).ok_or(DSEError::_SampleInPresetMissing(*mapping)).unwrap().clone()))
                             } else {
+                                // The ones that are filtered out are not in this specific soundfont
                                 None
                             }
-                        });
-                    let sample_infos_trimmed: BTreeMap<u16, SampleInfo> = samples_used_per_song.get(name).ok_or(DSEError::Invalid(format!("Song with name '{}' not found!", &name)))?.iter().filter_map(|x| {
-                        if let Some(mapping) = sample_mappings.get(&x.i) {
-                            Some((x.i, sample_infos.get(mapping).ok_or(DSEError::_SampleInPresetMissing(*mapping)).unwrap().clone()))
-                        } else {
-                            // The ones that are filtered out are not in this specific soundfont
-                            None
-                        }
-                    }).collect::<BTreeMap<u16, SampleInfo>>();
-                    sample_infos_merged.extend(sample_infos_trimmed);
+                        }).collect::<BTreeMap<u16, SampleInfo>>();
+                        sample_infos_merged.extend(sample_infos_trimmed);
+                    }
                 } else {
                     println!("{}Soundfont '{}' is never used! Writing will be skipped.", "Warning: ".yellow(), soundfont_name);
                 }
