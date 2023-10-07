@@ -79,7 +79,8 @@ impl<'a> Hash for SampleEntry<'a> {
 
 #[derive(Debug)]
 struct InstrumentMappingEntry<'a> {
-    i: usize,
+    preset_i: usize,
+    preset_zone_i: usize,
     zone: &'a Zone
 }
 impl<'a> PartialEq for InstrumentMappingEntry<'a> {
@@ -237,7 +238,7 @@ fn main() -> Result<(), DSEError> {
                         let mut dummy_smpl = SampleInfo::default();
                         dummy_smpl.smplrate = 44100;
                         (i as u16, dummy_smpl)
-                    }).collect::<BTreeMap<u16, SampleInfo>>(), &mut dummy_prgi, |x| Some(x), 1, 0, |preset, global_preset_zone, preset_zone_i, preset_zone, instrument_i, instrument| {
+                    }).collect::<BTreeMap<u16, SampleInfo>>(), &mut dummy_prgi, |x| Some(x), 1, 0, |preset_i, preset, global_preset_zone, preset_zone_i, preset_zone, instrument_i, instrument| {
                         // When this is called, the instrument is guaranteed to not be a global instrument
                         let mut preset_zones_to_search = vec![preset_zone];
                         if let Some(global_preset_zone) = global_preset_zone {
@@ -275,7 +276,7 @@ fn main() -> Result<(), DSEError> {
                         }
                         // Make a record of if this instrument is used or not (only the index can be saved, and so a second step is necessary to actually turn these indices into references, which is done outside of this closure)
                         if keep {
-                            preset_zones_used_for_soundfont_indices.push(preset_zone_i);
+                            preset_zones_used_for_soundfont_indices.push((preset_i, preset_zone_i));
                         }
                         keep
                     }, |_, preset, _| {
@@ -286,10 +287,10 @@ fn main() -> Result<(), DSEError> {
                         }
                     });
                     // Turn the preset zone (individual instrument mappings) indices for instruments used into actual references to the preset zones
-                    for preset_zone_i in preset_zones_used_for_soundfont_indices {
-                        if let Some(preset) = sf2.presets.iter().find(|preset| preset.header.bank == *bank as u16 && preset.header.preset == *program as u16) {
+                    for (preset_i, preset_zone_i) in preset_zones_used_for_soundfont_indices {
+                        if let Some(preset) = sf2.presets.get(preset_i) {
                             instrument_mappings_used.entry(song_config.uses[soundfont_i].clone()).or_insert(HashSet::new())
-                                .insert(InstrumentMappingEntry { i: preset_zone_i, zone: &preset.zones[preset_zone_i as usize] });
+                                .insert(InstrumentMappingEntry { preset_i, preset_zone_i, zone: &preset.zones[preset_zone_i as usize] });
                         } else {
                             panic!("{}Failed to find a previously-marked preset!", "Internal Error: ".red());
                         }
@@ -437,7 +438,7 @@ fn main() -> Result<(), DSEError> {
                             |i| sample_mappings.get(&i).copied(),
                             soundtrack_config.sample_rate_adjustment_curve,
                             soundtrack_config.pitch_adjust,
-                            |_, _, _, preset_zone, _, _| instrument_mappings_used_for_soundfont.get(&InstrumentMappingEntry { i: 0, zone: preset_zone }).is_some(),
+                            |_, _, _, _, preset_zone, _, _| instrument_mappings_used_for_soundfont.get(&InstrumentMappingEntry { preset_i: 0, preset_zone_i: 0, zone: preset_zone }).is_some(),
                             |_, preset, program_info| {
                                 //TODO: An sf2 exported from VGMTrans had an extra empty preset after all the normal ones visible in Polyphone with a bank/preset number of 000:000, which broke the assertion that each id should correspond to one preset. The likely explanation is that empty presets are meant to be ignored, and so we do that here.
                                 if program_info.splits_table.len() > 0 {
