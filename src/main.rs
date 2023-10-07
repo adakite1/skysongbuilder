@@ -39,9 +39,6 @@ where D: Deserializer<'de> {
         buf.trim().parse().map_err(serde::de::Error::custom).map(|x| (x, false))
     }
 }
-const fn ppmdu_mainbank_default() -> bool {
-    false
-}
 const fn decoupled_default() -> bool {
     false
 }
@@ -51,8 +48,6 @@ const fn flags_default() -> SongBuilderFlags {
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 struct SoundtrackConfig {
     mainbank: PathBuf,
-    #[serde(default = "ppmdu_mainbank_default")]
-    ppmdu_mainbank: bool,
     #[serde(default = "decoupled_default")]
     decoupled: bool,
     #[serde(default = "flags_default")]
@@ -132,15 +127,15 @@ fn main() -> Result<(), DSEError> {
 
         // =========== SMDL ===========
 
+        // Keep track of how the presets are mapped
+        let mut preset_mapping_information: HashMap<String, HashMap<(u8, u8), u8>> = HashMap::new();
+
         // Keep track of which presets and samples are actually used by the MIDI
         let mut samples_used: HashMap<String, HashSet<SampleEntry>> = HashMap::new();
         let mut samples_used_per_song: HashMap<String, HashSet<SampleEntry>> = HashMap::new();
         let mut instrument_mappings_used: HashMap<String, HashSet<InstrumentMappingEntry>> = HashMap::new();
         let mut presets_used: HashMap<String, HashSet<PresetEntry>> = HashMap::new();
         let mut presets_used_per_song: HashMap<String, HashSet<PresetEntry>> = HashMap::new();
-
-        // Keep track of how the presets are mapped
-        let mut preset_mapping_information: HashMap<String, HashMap<(u8, u8), u8>> = HashMap::new();
 
         // Read in all the MIDI files
         for (name, song_config) in soundtrack_config.songs.iter() {
@@ -149,10 +144,6 @@ fn main() -> Result<(), DSEError> {
             let smf = open_midi(&smf_source)?;
             let tpb = get_midi_tpb(&smf)?;
 
-            let mut used_soundfonts = Vec::with_capacity(song_config.uses.len());
-            for soundfont_name in song_config.uses.iter() {
-                used_soundfonts.push((soundfont_name.clone(), soundfonts.get(soundfont_name).ok_or(DSEError::Invalid(format!("Soundfont with name '{}' not found!", soundfont_name)))?));
-            }
             fn find_preset_in_soundfont(soundfont: &SoundFont2, bank: u16, program: u16) -> Option<usize> {
                 for (i, preset) in soundfont.presets.iter().enumerate() {
                     if preset.header.bank == bank && preset.header.preset == program {
@@ -384,7 +375,6 @@ fn main() -> Result<(), DSEError> {
                     sf2,
                     &mut main_bank_swdl,
                     DSPOptions {
-                        ppmdu_mainbank: soundtrack_config.ppmdu_mainbank,
                         resample_threshold: soundtrack_config.dsp.resample_threshold.round() as u32,
                         sample_rate,
                         sample_rate_relative,
