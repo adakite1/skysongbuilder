@@ -1,4 +1,4 @@
-use std::{path::{Path, PathBuf}, fs::{File, OpenOptions}, io::Seek};
+use std::{path::Path, fs::{File, OpenOptions}, io::Seek};
 
 use chrono::{DateTime, Local, Datelike, Timelike};
 use dse::dtype::DSEError;
@@ -38,23 +38,5 @@ pub fn open_file_overwrite_rw<P: AsRef<Path>>(path: P) -> Result<File, DSEError>
     file.set_len(0)?;
     file.seek(std::io::SeekFrom::Start(0))?;
     Ok(file)
-}
-
-pub fn valid_file_of_type<P: AsRef<Path>>(path: P, t: &str) -> bool {
-    if let Ok(file_metadata) = std::fs::metadata(&path) {
-        let is_file = file_metadata.is_file();
-        let extension = path.as_ref().extension();
-        if let Some(extension) = extension {
-            if let Some(extension) = extension.to_str() {
-                is_file && extension.to_lowercase() == t.to_lowercase()
-            } else {
-                false
-            }
-        } else {
-            false
-        }
-    } else {
-        false
-    }
 }
 

@@ -357,7 +357,7 @@ checksum = "9ea835d29036a4087793836fa931b08837ad5e957da9e23886b29586fb9b6650"
 [[package]]
 name = "dse"
 version = "0.1.0"
-source = "git+https://github.com/adakite1/dse.git#46689131aa3c0fe4dbb292389bddc4235d08464a"
+source = "git+https://github.com/adakite1/dse.git#9d5c73aadbe8d67c304ba47ee5473bfcaa120c64"
 dependencies = [
  "base64",
  "bevy_reflect",
@@ -368,6 +368,7 @@ dependencies = [
  "colored",
  "dse-dsp-sys",
  "glob",
+ "indexmap",
  "midly",
  "num-traits",
  "phf",
@@ -609,9 +610,9 @@ dependencies = [
 
 [[package]]
 name = "num-traits"
-version = "0.2.16"
+version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f30b0abd723be7e2ffca1272140fac1a2f084c77ec3e123c192b66af1ee9e6c2"
+checksum = "39e3200413f237f41ab11ad6d161bc7239c84dcb631773ccd7de3dfe4b5c267c"
 dependencies = [
  "autocfg",
 ]
