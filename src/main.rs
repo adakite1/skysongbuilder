@@ -5,11 +5,9 @@ use dse::{dtype::{DSEError, ReadWrite}, swdl::{SWDL, SongBuilderFlags, sf2::DSPO
 use fileutils::get_file_last_modified_date_with_default;
 use indexmap::IndexMap;
 use serde::{Serialize, Deserialize, Deserializer};
-use soundfont::SoundFont2;
+use soundfont::{data::SampleHeader, Preset, SoundFont2, Zone};
 
 use crate::fileutils::open_file_overwrite_rw;
-
-use thiserror::Error;
 
 mod deserialize_with;
 mod fileutils;
@@ -17,50 +15,169 @@ mod fileutils;
 const VERSION: Option<&str> = option_env!("CARGO_PKG_VERSION");
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
-struct SongConfig {
-    i: usize,
-    mid: PathBuf,
-    uses: Vec<String>
+#[serde(untagged)]
+enum Song {
+    Sf2AndMidi {
+        mid: PathBuf,
+        uses: Vec<String>
+    },
+    RawAudio {
+        raw: PathBuf,
+        loop_point: u32
+    }
 }
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
-struct DSPConfig {
-    resample_threshold: f64,
-    #[serde(deserialize_with = "deserialize_resample_at")]
-    resample_at: (f64, bool),
-    adpcm_encoder_lookahead: u16
+
+trait MergeDefaults {
+    fn merge_defaults(&mut self, other: &Self);
+    fn finalize(&mut self);
 }
-fn deserialize_resample_at<'de, D>(deserializer: D) -> Result<(f64, bool), D::Error>
+
+fn deserialize_resample_at<'de, D>(deserializer: D) -> Result<Option<(f64, bool)>, D::Error>
 where D: Deserializer<'de> {
     let buf = String::deserialize(deserializer)?;
 
     if buf.trim().starts_with("times") {
-        buf.trim()[5..].trim().parse().map_err(serde::de::Error::custom).map(|x| (x, true))
+        buf.trim()[5..].trim().parse().map_err(serde::de::Error::custom).map(|x| Some((x, true)))
     } else {
-        buf.trim().parse().map_err(serde::de::Error::custom).map(|x| (x, false))
+        buf.trim().parse().map_err(serde::de::Error::custom).map(|x| Some((x, false)))
     }
 }
-const fn decoupled_default() -> bool {
-    false
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+struct DSPConfig {
+    resample_threshold: Option<f64>,
+    #[serde(deserialize_with = "deserialize_resample_at")]
+    resample_at: Option<(f64, bool)>,
+    adpcm_encoder_lookahead: Option<u16>
 }
-const fn flags_default() -> SongBuilderFlags {
-    SongBuilderFlags::empty()
+impl Default for DSPConfig {
+    fn default() -> Self {
+        DSPConfig {
+            resample_threshold: Some(0.0),
+            resample_at: Some((1.0, true)),
+            adpcm_encoder_lookahead: Some(3)
+        }
+    }
 }
-const fn vcrange_default() -> RangeInclusive<i8> {
-    0..=15
+impl MergeDefaults for DSPConfig {
+    fn merge_defaults(&mut self, other: &Self) {
+        if self.resample_threshold.is_none() && other.resample_threshold.is_some() {
+            self.resample_threshold = other.resample_threshold.clone();
+        }
+        if self.resample_at.is_none() && other.resample_at.is_some() {
+            self.resample_at = other.resample_at.clone();
+        }
+        if self.adpcm_encoder_lookahead.is_none() && other.adpcm_encoder_lookahead.is_some() {
+            self.adpcm_encoder_lookahead = other.adpcm_encoder_lookahead.clone();
+        }
+    }
+    fn finalize(&mut self) {
+        self.merge_defaults(&DSPConfig::default())
+    }
 }
+impl DSPConfig {
+    pub fn resample_threshold(&self) -> &f64 {
+        self.resample_threshold.as_ref().expect("Failed to obtain option 'resample_threshold'! It's likely that 'finalize' was not called on the options.")
+    }
+    pub fn resample_at(&self) -> &(f64, bool) {
+        self.resample_at.as_ref().expect("Failed to obtain option 'resample_at'! It's likely that 'finalize' was not called on the options.")
+    }
+    pub fn adpcm_encoder_lookahead(&self) -> &u16 {
+        self.adpcm_encoder_lookahead.as_ref().expect("Failed to obtain option 'adpcm_encoder_lookahead'! It's likely that 'finalize' was not called on the options.")
+    }
+}
+
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+struct Shared {
+    // SWD/SMD export
+    mainbank: Option<PathBuf>,
+    decoupled: Option<bool>,
+    sample_rate_adjustment_curve: Option<usize>,
+    pitch_adjust: Option<i64>,
+
+    // General
+    outputdir: Option<PathBuf>,
+    dsp: Option<DSPConfig>,
+    flags: Option<SongBuilderFlags>,
+}
+impl Default for Shared {
+    fn default() -> Self {
+        Shared {
+            mainbank: None,
+            decoupled: Some(false),
+            sample_rate_adjustment_curve: Some(1),
+            pitch_adjust: Some(0),
+            outputdir: Some(PathBuf::from("./out")),
+            dsp: Some(DSPConfig::default()),
+            flags: Some(SongBuilderFlags::empty())
+        }
+    }
+}
+impl MergeDefaults for Shared {
+    fn merge_defaults(&mut self, other: &Self) {
+        if self.mainbank.is_none() && other.mainbank.is_some() {
+            self.mainbank = other.mainbank.clone();
+        }
+        if self.decoupled.is_none() && other.decoupled.is_some() {
+            self.decoupled = other.decoupled.clone();
+        }
+        if self.sample_rate_adjustment_curve.is_none() && other.sample_rate_adjustment_curve.is_some() {
+            self.sample_rate_adjustment_curve = other.sample_rate_adjustment_curve.clone();
+        }
+        if self.pitch_adjust.is_none() && other.pitch_adjust.is_some() {
+            self.pitch_adjust = other.pitch_adjust.clone();
+        }
+        if self.outputdir.is_none() && other.outputdir.is_some() {
+            self.outputdir = other.outputdir.clone();
+        }
+        if self.dsp.is_none() && other.dsp.is_some() {
+            self.dsp = other.dsp.clone();
+        }
+        if self.flags.is_none() && other.flags.is_some() {
+            self.flags = other.flags.clone();
+        }
+    }
+    fn finalize(&mut self) {
+        self.merge_defaults(&Shared::default());
+        if let Some(dsp) = self.dsp.as_mut() {
+            dsp.merge_defaults(&DSPConfig::default());
+        }
+    }
+}
+impl Shared {
+    pub fn mainbank(&self) -> &PathBuf {
+        self.mainbank.as_ref().expect("Failed to obtain option 'mainbank'! It's likely that 'finalize' was not called on the options.")
+    }
+    pub fn decoupled(&self) -> &bool {
+        self.decoupled.as_ref().expect("Failed to obtain option 'decoupled'! It's likely that 'finalize' was not called on the options.")
+    }
+    pub fn sample_rate_adjustment_curve(&self) -> &usize {
+        self.sample_rate_adjustment_curve.as_ref().expect("Failed to obtain option 'sample_rate_adjustment_curve'! It's likely that 'finalize' was not called on the options.")
+    }
+    pub fn pitch_adjust(&self) -> &i64 {
+        self.pitch_adjust.as_ref().expect("Failed to obtain option 'pitch_adjust'! It's likely that 'finalize' was not called on the options.")
+    }
+    pub fn outputdir(&self) -> &PathBuf {
+        self.outputdir.as_ref().expect("Failed to obtain option 'outputdir'! It's likely that 'finalize' was not called on the options.")
+    }
+    pub fn dsp(&self) -> &DSPConfig {
+        self.dsp.as_ref().expect("Failed to obtain option 'dsp'! It's likely that 'finalize' was not called on the options.")
+    }
+    pub fn flags(&self) -> &SongBuilderFlags {
+        self.flags.as_ref().expect("Failed to obtain option 'flags'! It's likely that 'finalize' was not called on the options.")
+    }
+}
+
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+struct SongConfig {
+    i: usize,
+    #[serde(flatten)]
+    song: Song,
+    #[serde(flatten)]
+    shared: Shared
+}
+
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 struct SoundtrackConfig {
-    mainbank: Option<PathBuf>,
-    #[serde(default = "decoupled_default")]
-    decoupled: bool,
-    #[serde(default = "flags_default")]
-    flags: SongBuilderFlags,
-    outputdir: PathBuf,
-    dsp: DSPConfig,
-    sample_rate_adjustment_curve: usize,
-    pitch_adjust: i64,
-    #[serde(default = "vcrange_default")]
-    vcrange: RangeInclusive<i8>,
     soundfonts: IndexMap<String, PathBuf>,
     songs: IndexMap<String, SongConfig>
 }
