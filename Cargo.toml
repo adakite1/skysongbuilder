@@ -13,8 +13,14 @@ midly = "0.5.3"
 soundfont = "0.0.2"
 chrono = "0.4.26"
 colored = "2"
-dse = { git = "https://github.com/adakite1/dse.git" }
+# dse = { git = "https://github.com/adakite1/dse.git" }
+dse = { path = "../dse" }
 thiserror = "1.0"
 void = "1"
 indexmap = { version = "2", features = ["serde"] }
+symphonia = { version = "0.5.3", features = ["all"] }
+hound = "3.5.1"
+uuid = "1.4.1"
+riff = "2.0.0"
+bevy_reflect = "0.11.3"
 # by_address = "1.1.0"

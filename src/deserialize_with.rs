@@ -4,7 +4,7 @@ use serde::{Deserialize, Deserializer, de::{Visitor, self, MapAccess}};
 
 use void::Void;
 
-fn string_or_struct<'de, T, D>(deserializer: D) -> Result<T, D::Error>
+pub fn string_or_struct<'de, T, D>(deserializer: D) -> Result<T, D::Error>
 where
     T: Deserialize<'de> + FromStr<Err = Void>,
     D: Deserializer<'de>,
