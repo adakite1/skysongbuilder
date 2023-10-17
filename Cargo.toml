@@ -17,4 +17,7 @@ dse = { git = "https://github.com/adakite1/dse.git" }
 thiserror = "1.0"
 void = "1"
 indexmap = { version = "2", features = ["serde"] }
+symphonia = { version = "0.5.3", features = ["all"] }
+riff = "2.0.0"
+bevy_reflect = "0.11.3"
 # by_address = "1.1.0"
