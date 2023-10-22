@@ -2,7 +2,7 @@ use std::{fs::File, io::{Read, Cursor, Seek}, path::PathBuf, collections::{HashM
 
 use bevy_reflect::Reflect;
 use colored::Colorize;
-use dse::{dsp::process_mono, dtype::{DSEError, SongBuilderFlags, AutoReadWrite, ReadWrite}, swdl::{SWDL, sf2::DSPOptions, SampleInfo}, smdl::{midi::open_midi, SMDL}, opinionated_translators::sf2midi::{FromMIDIOnce, TrimmedSampleDataCopy, FromSF2Once}};
+use dse::{dsp::{process_mono, init_deltas, adpcm_encode_round_to_valid_block_size, block_alignment::BlockAlignment, resample_len_preview, get_sample_rate_by_out_samples, adpcm_block_size_preview}, dtype::{DSEError, SongBuilderFlags, AutoReadWrite, ReadWrite}, swdl::{SWDL, sf2::DSPOptions, SampleInfo}, smdl::{midi::open_midi, SMDL}, opinionated_translators::sf2midi::{FromMIDIOnce, TrimmedSampleDataCopy, FromSF2Once}};
 use fileutils::get_file_last_modified_date_with_default;
 use indexmap::IndexMap;
 use riff::{ChunkId, ChunkContents};
@@ -36,7 +36,7 @@ struct Song {
     uses: Option<Vec<String>>,
 
     raw: Option<PathBuf>,
-    loop_point: Option<u32>,
+    loop_point: Option<usize>,
 
     #[serde(flatten)]
     shared: Shared,
@@ -383,7 +383,7 @@ fn main() -> Result<(), DSEError> {
 
                 Ok(())
             };
-            let process_raw_audio = |raw: PathBuf, loop_point: Option<u32>, song: &mut Song| -> Result<(), DSEError> {
+            let process_raw_audio = |raw: PathBuf, loop_point: Option<usize>, song: &mut Song| -> Result<(), DSEError> {
                 // Use symphonia to read in the raw audio data
                 let raw_audio_file = Box::new(File::open(&raw)?);
                 let mss = MediaSourceStream::new(raw_audio_file, Default::default());
@@ -454,31 +454,16 @@ fn main() -> Result<(), DSEError> {
                         Err(_) => break,
                     }
                 }
-                
-                let fix_loop = |left_samples: &mut Vec<i16>, right_samples: &mut Vec<i16>, block_size: usize, loop_point: &Option<u32>| -> Option<usize> {
-                    let mut loop_start_block_i = None;
-                    if let Some(loop_point) = &loop_point {
-                        // If we are looping, repeat the audio data from the loop point to the end of the block that that loop point belongs to and append it to the end of the audio so that the loop can start cleanly from a fresh block.
-                        let loop_copy_block_start_index = *loop_point as usize;
-                        loop_start_block_i = Some(*loop_point as usize / block_size + 1);
-                        let loop_copy_block_end_index = (loop_start_block_i.unwrap() * block_size).min(left_samples.len());
-                        left_samples.extend_from_within(loop_copy_block_start_index..loop_copy_block_end_index);
-                        right_samples.extend_from_within(loop_copy_block_start_index..loop_copy_block_end_index);
-                    }
-                    loop_start_block_i
-                };
 
                 for format in song.shared.formats().iter() {
                     match format {
                         RawAudioExportFormats::Wav4BitAdpcmNDSPlanarStereoLooped => {
                             // Figure out the block size
-                            let block_size = if let Some(adpcm_block_size) = song.shared.dsp().adpcm_block_size() {
+                            let block_size = adpcm_encode_round_to_valid_block_size(if let Some(adpcm_block_size) = song.shared.dsp().adpcm_block_size() {
                                 *adpcm_block_size
                             } else {
                                 left_samples.len()
-                            };
-                            // Fix looping
-                            let loop_start_block_i = fix_loop(&mut left_samples, &mut right_samples, block_size, &loop_point);
+                            });
 
                             // Open output files
                             let left_file_path;
@@ -513,6 +498,54 @@ fn main() -> Result<(), DSEError> {
                                 track_sample_rate as f64
                             }.round(); // Round for better compatibility with the NDS's sound systems.
 
+                            // Process
+                            let left_samples_processed;
+                            let right_samples_processed;
+                            pub struct ToBlocks {
+                                multiple: usize
+                            }
+                            impl ToBlocks {
+                                pub fn new(multiple: usize) -> ToBlocks {
+                                    ToBlocks { multiple }
+                                }
+                            }
+                            impl BlockAlignment for ToBlocks {
+                                fn round_up(&self, value: usize) -> usize {
+                                    if self.multiple == 0 {
+                                        return value;
+                                    }
+                                    let remainder = value % self.multiple;
+                                    if remainder == 0 {
+                                        return value;
+                                    }
+                                    return value + self.multiple - remainder;
+                                }
+                                fn zero_pad_front(&self, _: usize) -> usize {
+                                    unimplemented!()
+                                }
+                                fn generate_aligned_options(&self, _: usize) -> Vec<usize> {
+                                    unimplemented!()
+                                }
+                            }
+                            
+                            let mut resampled_len_preview = resample_len_preview(track_sample_rate as f64, new_sample_rate, left_samples.len());
+                            if let Some(_) = loop_point {
+                                let target_n_samples = ToBlocks::new(block_size).round_up(resampled_len_preview);
+                                new_sample_rate = get_sample_rate_by_out_samples(track_sample_rate as f64, left_samples.len(), target_n_samples);
+                                resampled_len_preview = target_n_samples;
+                            }
+                            (left_samples_processed, _) = process_mono(&left_samples,
+                                track_sample_rate as f64, new_sample_rate,
+                                *song.shared.dsp().adpcm_encoder_lookahead() as i32, init_deltas::averaging,
+                                Some(block_size), &[]);
+                            (right_samples_processed, _) = process_mono(&right_samples,
+                                track_sample_rate as f64, new_sample_rate,
+                                *song.shared.dsp().adpcm_encoder_lookahead() as i32, init_deltas::averaging,
+                                Some(block_size), &[]);
+                            assert_eq!(left_samples_processed.len(), right_samples_processed.len());
+                            resampled_len_preview = adpcm_block_size_preview(block_size) * (resampled_len_preview / block_size);
+                            assert_eq!(left_samples_processed.len(), resampled_len_preview);
+
                             let wave_id: ChunkId = ChunkId { value: [0x57, 0x41, 0x56, 0x45] }; //WAVE
                             let fmt_id: ChunkId = ChunkId { value: [0x66, 0x6D, 0x74, 0x20] }; //fmt\0
                             let smpl_id: ChunkId = ChunkId { value: [0x73, 0x6D, 0x70, 0x6C] }; //smpl
@@ -530,8 +563,7 @@ fn main() -> Result<(), DSEError> {
                             }
                             impl AutoReadWrite for WaveAdpcmFmtChunk {  }
                             // let extraData = [0; 32];
-                            let nBlockAlign: u16 = (song.shared.dsp().adpcm_block_size().map(|x| *x).unwrap_or(505) as u16 - 1) / 2 + 4;
-                            let mut fmt_data = {
+                            let fmt_data = {
                                 let mut data: Vec<u8> = Vec::new();
                                 let mut cursor = Cursor::new(&mut data);
                                 WaveAdpcmFmtChunk {
@@ -539,28 +571,80 @@ fn main() -> Result<(), DSEError> {
                                     nChannels: 1,
                                     nSamplesPerSec: new_sample_rate as u32,
                                     nAvgBytesPerSec: (((new_sample_rate / 2.0).ceil() as u32 - 1) | 255) + 1,
-                                    nBlockAlign,
+                                    nBlockAlign: adpcm_block_size_preview(block_size) as u16,
                                     wBitsPerSample: 4,
                                     cbSize: 0
                                 }.write_to_file(&mut cursor)?;
                                 data
                             };
 
+                            #[derive(Debug, Clone, Default, Reflect)]
+                            struct WaveSmplChunk {
+                                manufacturer: u32,
+                                product: u32,
+                                sample_period: u32,
+                                midi_unity_note: u32,
+                                midi_pitch_fraction: u32,
+                                smpte_format: u32,
+                                smpte_offset: u32,
+                                num_loops: u32,
+                                sample_data: u32,
+                                loop_1_id: u32,
+                                loop_1_type: u32,
+                                loop_1_start: u32,
+                                loop_1_end: u32,
+                                loop_1_fraction: u32,
+                                loop_1_num_times_to_play_the_loop: u32
+                            }
+                            impl AutoReadWrite for WaveSmplChunk {  }
+                            let smpl_data = if let Some(loop_point) = loop_point {
+                                let mut data: Vec<u8> = Vec::new();
+                                let mut cursor = Cursor::new(&mut data);
+                                WaveSmplChunk {
+                                    manufacturer: 0,
+                                    product: 0,
+                                    sample_period: (1_000_000_000.0 / new_sample_rate).round() as u32,
+                                    midi_unity_note: 60,
+                                    midi_pitch_fraction: 0,
+                                    smpte_format: 0,
+                                    smpte_offset: 0,
+                                    num_loops: 1,
+                                    sample_data: 0,
+                                    loop_1_id: 0,
+                                    loop_1_type: 0,
+                                    loop_1_start: loop_point as u32,
+                                    loop_1_end: loop_point as u32,
+                                    loop_1_fraction: 0,
+                                    loop_1_num_times_to_play_the_loop: 0,
+                                }.write_to_file(&mut cursor)?;
+                                Some(data)
+                            } else {
+                                None
+                            };
+
                             ChunkContents::Children(
                                 riff::RIFF_ID,
                                 wave_id,
-                                vec![
-                                    ChunkContents::Data(fmt_id, fmt_data.clone()),
-                                    ChunkContents::Data(data_id, process_mono(&left_samples, track_sample_rate as f64, new_sample_rate, *song.shared.dsp().adpcm_encoder_lookahead() as i32, song.shared.dsp().adpcm_block_size().cloned(), &[]).0)
-                                ]
+                                if let Some(smpl_data) = smpl_data.as_ref() {
+                                    vec![ChunkContents::Data(fmt_id, fmt_data.clone()),
+                                        ChunkContents::Data(smpl_id, smpl_data.clone()),
+                                        ChunkContents::Data(data_id, left_samples_processed)]
+                                } else {
+                                    vec![ChunkContents::Data(fmt_id, fmt_data.clone()),
+                                        ChunkContents::Data(data_id, left_samples_processed)]
+                                }
                             ).write(&mut left_file)?;
                             ChunkContents::Children(
                                 riff::RIFF_ID,
                                 wave_id,
-                                vec![
-                                    ChunkContents::Data(fmt_id, fmt_data),
-                                    ChunkContents::Data(data_id, process_mono(&right_samples, track_sample_rate as f64, new_sample_rate, *song.shared.dsp().adpcm_encoder_lookahead() as i32, song.shared.dsp().adpcm_block_size().cloned(), &[]).0)
-                                ]
+                                if let Some(smpl_data) = smpl_data.as_ref() {
+                                    vec![ChunkContents::Data(fmt_id, fmt_data.clone()),
+                                        ChunkContents::Data(smpl_id, smpl_data.clone()),
+                                        ChunkContents::Data(data_id, right_samples_processed)]
+                                } else {
+                                    vec![ChunkContents::Data(fmt_id, fmt_data.clone()),
+                                        ChunkContents::Data(data_id, right_samples_processed)]
+                                }
                             ).write(&mut right_file)?;
                         }
                     }
