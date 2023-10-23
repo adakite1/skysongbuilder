@@ -523,14 +523,14 @@ fn main() -> Result<(), DSEError> {
                                 fn zero_pad_front(&self, _: usize) -> usize {
                                     unimplemented!()
                                 }
-                                fn generate_aligned_options(&self, _: usize) -> Vec<usize> {
-                                    unimplemented!()
+                                fn generate_aligned_options(&self, n_samples: usize) -> Vec<usize> {
+                                    vec![self.round_up(n_samples) - self.multiple] // Always lower the sample rate since we don't want to exceed the NDS's internal one.
                                 }
                             }
                             
                             let mut resampled_len_preview = resample_len_preview(track_sample_rate as f64, new_sample_rate, left_samples.len());
                             if let Some(_) = loop_point {
-                                let target_n_samples = ToBlocks::new(block_size).round_up(resampled_len_preview);
+                                let target_n_samples = *ToBlocks::new(block_size).generate_aligned_options(resampled_len_preview).get(0).expect("Internal Error: Loop processing failed!");
                                 new_sample_rate = get_sample_rate_by_out_samples(track_sample_rate as f64, left_samples.len(), target_n_samples);
                                 resampled_len_preview = target_n_samples;
                             }
