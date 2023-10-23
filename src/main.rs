@@ -2,7 +2,7 @@ use std::{fs::File, io::{Read, Cursor, Seek}, path::PathBuf, collections::{HashM
 
 use bevy_reflect::Reflect;
 use colored::Colorize;
-use dse::{dsp::{process_mono, init_deltas, adpcm_encode_round_to_valid_block_size, block_alignment::BlockAlignment, resample_len_preview, get_sample_rate_by_out_samples, adpcm_block_size_preview}, dtype::{DSEError, SongBuilderFlags, AutoReadWrite, ReadWrite}, swdl::{SWDL, sf2::DSPOptions, SampleInfo}, smdl::{midi::open_midi, SMDL}, opinionated_translators::sf2midi::{FromMIDIOnce, TrimmedSampleDataCopy, FromSF2Once}};
+use dse::{dsp::{process_mono, init_deltas, adpcm_encode_round_to_valid_block_size, block_alignment::BlockAlignment, resample_len_preview, get_sample_rate_by_out_samples, adpcm_block_size_preview, resample_pos_preview}, dtype::{DSEError, SongBuilderFlags, AutoReadWrite, ReadWrite}, swdl::{SWDL, sf2::DSPOptions, SampleInfo}, smdl::{midi::open_midi, SMDL}, opinionated_translators::sf2midi::{FromMIDIOnce, TrimmedSampleDataCopy, FromSF2Once}};
 use fileutils::get_file_last_modified_date_with_default;
 use indexmap::IndexMap;
 use riff::{ChunkId, ChunkContents};
@@ -597,7 +597,10 @@ fn main() -> Result<(), DSEError> {
                                 loop_1_num_times_to_play_the_loop: u32
                             }
                             impl AutoReadWrite for WaveSmplChunk {  }
-                            let smpl_data = if let Some(loop_point) = loop_point {
+                            let smpl_data = if let Some(mut loop_point) = loop_point {
+                                // Map the loop point to its new position after the sample rate adjustment.
+                                loop_point = resample_pos_preview(track_sample_rate as f64, new_sample_rate, left_samples.len(), loop_point);
+
                                 let mut data: Vec<u8> = Vec::new();
                                 let mut cursor = Cursor::new(&mut data);
                                 WaveSmplChunk {
