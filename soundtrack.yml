@@ -1,14 +1,18 @@
-#skysongbuilder 0.1.2-pre
+#skysongbuilder 0.1.3-pre
 
-mainbank: bgm.swd                 # Where the original game's main bank is (you can find this in the rom)
 outputdir: ./out                  # Where to output the song files (it'll make the folder if it doesn't exist)
-decoupled: false                  # false If a main bank should be generated (default); true If samples should be included separately in each song file
 dsp:                              # Settings for stuff related to audio processing
   resample_threshold: 22050       # If a sample has a sample rate above this threshold, it will automatically be resampled (in the highest-quality way possible of course) to the sample rate specified by "resample_at" below
   resample_at: 22050              # See above
   adpcm_encoder_lookahead: 3      # The higher the better, but also, the higher the slower; set to 3 while composing and when you're releasing your hack set it to 6, start the program, and go sleep
+# Settings related to in-engine songs
+mainbank: bgm.swd                 # Where the original game's main bank is (you can find this in the rom after unpacking under `data\SOUND\BGM`)
+decoupled: false                  # false if a main bank should be generated (default and recommended), and true if samples should be included separately in each song file
 sample_rate_adjustment_curve: 1   # Default is good
 pitch_adjust: 0                   # Adjust the pitch of everything (in cents)
+vcrange:                          # Which Nintendo DS sound channels to utilize (ranged 0-15 for the 16 hardware channels available)
+  start: 0                        #  First channel to use
+  end: 15                         #  Last channel to use
 
 ## These are advanced options, use with care. Leave it as it is for normal usage.
 ### WAVI_POINTER_EXTENSION
@@ -29,10 +33,11 @@ soundfonts:
 
 # Add songs here
 songs:
+  # First, here are some examples of how to do in-engine songs.
   Pokemon Exploration Team Theme:
     i: 1                          # The id number for your song.
                                   # If you set it to 100 for example, the files outputted will be bgm0100.swd / bgm0100.smd
-                                  # WARNING: Don't set it to 0
+                                  # WARNING: Don't set it to 0. The game has a hard-coded check against it.
     mid: 1_B_SYS_P3_OPENIN.mid    # The path to the midi file for the song
     uses: [Main Bank, 2nd Bank]   # A list of soundfonts used by your song
   Top Menu Theme:
@@ -43,5 +48,33 @@ songs:
     i: 6
     mid: Shindan.mid
     uses: [Main Bank]
+  # Now here's a few examples of how to do raw audio songs.
+  A Town Called Hometown:
+    i: 7                                          # Same as in-engine songs
+    raw: a town called hometown.wav               # The path to the raw audio file. Many common file formats are supported, although if it ever fails to work, simply re-export as wav in Audacity first
+    loop_point: 907198                            # The loop start point in samples
+    formats: [Wav4BitAdpcmNDSPlanarStereoLooped]  # Specifies the input and output format
+    ## Formats available
+    ### Wav4BitAdpcmNDSPlanarStereoLooped
+    ###  - Outputs dual-mono (planar) 4-bit NDS ADPCM wave files.
+    ###  - Expects stereo audio files!
+    ###  - Includes loop processing, although non-looped files are also supported if the loop point isn't set.
+    dsp:
+      adpcm_block_size: 16377                     # Default is good
+      resample_at: 32728                          # Note that configurations like `resample_at` can also be set here, overriding the global setting
+      adpcm_encoder_lookahead: 4                  # Another example of overriding the global setting
+    flags: SND_STREAM                             # Default is good, required for playback using the patch
+    #mid: Custom paired midi.mid                   # You can actually specify these settings you would use for in-engine music here as well, and skysongbuilder will generate them as usual. This can be useful for access to DSE signals for example for coordinating cutscenes to music
+    #uses: []                                      # `uses` is also allowed here, although I can't really think of a use for it. It'll work though
+  Open Pass:
+    i: 8
+    raw: Open Pass.mp3
+    formats: [Wav4BitAdpcmNDSPlanarStereoLooped]
+    dsp:
+      adpcm_block_size: 16377
+    flags: SND_STREAM
+  # Note that in-engine songs and raw audio songs can co-exist in the same configuration and in the game's music directory with no problems.
 
-# P.s. if the game shows a black screen for a track, that track uses too many samples and has caused a lack of memory error in the game.
+
+# P.s. if the game shows a black screen for an in-engine track, that track uses too many samples and has caused a lack of memory error in the game.
+# Note that since raw audio songs take up around 1/3 of the built-in engine's memory, some built-in tracks might also cause a lack of memory error if played together with a streamed track.
