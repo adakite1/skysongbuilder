@@ -3,7 +3,7 @@ SkySongBuilder is a tool to build custom songs for Pokémon Mystery Dungeon: Exp
 - In-engine music from Soundfont2 and MIDI files
 - Streamed music from raw audio files (wav, mp3, etc.)
 
-**Features:**
+## Features:
 - **Optimizations down to the note-level for in-engine songs**<br/>
 Any Soundfonts you put in are optimized and trimmed down, all the way to the "what notes are played in the MIDI files?" level. For example, if you have a piano soundfont with 352 samples
 with 4 whole velocity layers and samples for all 88 keys, but a song keeps playing the note E at a velocity of 80 over and over and over again, the converted sample bank will only contain 1 sample: the E at a velocity of 80. From there, every level of a soundfont is optimized to strip away anything that isn't strictly required.
@@ -14,7 +14,7 @@ The same processing used for importing samples seamlessly is used for raw audio 
 - **Simple configuration**<br/>
 You just have to make one configuration file named `soundtrack.yml`. Here's an [example](https://github.com/adakite1/skysongbuilder/blob/master/soundtrack.yml) of what that might look like.
 
-**How to use:**
+## How to use:
 1. Modify the example configuration file to taste.
 2. Download the most recent version of SkySongBuilder here: [Releases](https://github.com/adakite1/skysongbuilder/releases)
 3. Run it inside the same folder as the configuration file
@@ -24,5 +24,6 @@ You just have to make one configuration file named `soundtrack.yml`. Here's an [
     - **Linux:** You know the drill.
 4. You're done!
 
+**For more information, make sure to peruse these resources!**<br/>
 See the [FAQ](https://github.com/adakite1/skysongbuilder/wiki/FAQ) for answers to a list of common questions and issues.<br/>
 See the [example configuration](https://github.com/adakite1/skysongbuilder/blob/master/soundtrack.yml) for a reference of all the options provided in the latest version of SkySongBuilder.
