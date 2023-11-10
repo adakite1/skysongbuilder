@@ -1,8 +1,9 @@
 ---
-name: Bug report
-about: Create a report to help us improve
+name: In-Engine Music Sound Differences
+about: Create a report related to sound differences between soundfont players and
+  generated in-engine music
 title: ''
-labels: ''
+labels: SongType:In-Engine
 assignees: ''
 
 ---
