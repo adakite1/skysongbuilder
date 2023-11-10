@@ -543,7 +543,11 @@ fn main() -> Result<(), DSEError> {
                                 *song.shared.dsp().adpcm_encoder_lookahead() as i32, init_deltas::averaging,
                                 Some(block_size), &[]);
                             assert_eq!(left_samples_processed.len(), right_samples_processed.len());
+                            let samples_in_shortened_last_block = resampled_len_preview % block_size;
                             resampled_len_preview = adpcm_block_size_preview(block_size) * (resampled_len_preview / block_size);
+                            if samples_in_shortened_last_block != 0 {
+                                resampled_len_preview += adpcm_block_size_preview(adpcm_encode_round_to_valid_block_size(samples_in_shortened_last_block));
+                            }
                             assert_eq!(left_samples_processed.len(), resampled_len_preview);
 
                             let wave_id: ChunkId = ChunkId { value: [0x57, 0x41, 0x56, 0x45] }; //WAVE
