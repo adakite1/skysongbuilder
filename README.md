@@ -19,9 +19,8 @@ You just have to make one configuration file named `soundtrack.yml`. Here's an [
 2. Download the most recent version of SkySongBuilder here: [Releases](https://github.com/adakite1/skysongbuilder/releases)
 3. Run it inside the same folder as the configuration file
   - It is recommended to run it inside PowerShell on Windows or Terminal on macOS and Linux so you can see what is happening:
-    - **Windows 11:** Right click somewhere empty within the folder where the executable is, then click "Open in Terminal". Once inside, type `./skysongbuilder.exe` and hit enter.
-    - **Windows 10:** See [this tutorial](https://www.youtube.com/watch?v=bgSSJQolR0E), and then type `./skysongbuilder.exe` and hit enter.
-    - **macOS:** Open the `Terminal` app, and then type `cd ` (with a space at the end) (do not hit enter!). Now, drag the folder containing the executable into the Terminal window, this will fill in the path to the folder into the terminal window. Now hit enter to change directories into the directory where SkySongBuilder resides. Then type `./skysongbuilder` and hit enter.
+    - **Windows 10/11:** See [this tutorial](https://www.youtube.com/watch?v=bgSSJQolR0E). Once you have the command prompt or PowerShell open inside the folder where you have the exe, type `./skysongbuilder.exe` and hit enter.
+    - **macOS:** Open the `Terminal` app, and then type `cd ` (with a space at the end) (do not hit enter!). Drag the folder containing the configuration file and the executable into the Terminal window, this will automatically fill in the path to that folder into the terminal window. Now hit enter to change directories into the directory. Then type `./skysongbuilder` and hit enter.
     - **Linux:** You know the drill.
 4. You're done!
 
